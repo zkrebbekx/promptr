@@ -1,6 +1,7 @@
 package coerce_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -281,6 +282,27 @@ func TestIntoAny(t *testing.T) {
 				So(ok, ShouldBeTrue)
 				So(nested["k"], ShouldResemble, []any{float64(1), float64(2)})
 			})
+		})
+	})
+}
+
+func TestProseIntoStructIsCoerceError(t *testing.T) {
+	Convey("Given bare prose with no object for a struct target", t, func() {
+		_, err := coerce.Into[Ticket]("I'm sorry, I can't help with that.")
+
+		Convey("Then a *CoerceError is returned (the runtime's retry signal)", func() {
+			So(err, ShouldNotBeNil)
+			var ce *coerce.CoerceError
+			So(errors.As(err, &ce), ShouldBeTrue)
+			So(ce.Target, ShouldContainSubstring, "Ticket")
+		})
+	})
+
+	Convey("Given a null where a struct is expected", t, func() {
+		_, err := coerce.Into[Ticket]("null")
+
+		Convey("Then it is tolerated as a zero value, not an error", func() {
+			So(err, ShouldBeNil)
 		})
 	})
 }

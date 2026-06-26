@@ -17,6 +17,24 @@ const (
 	kObj
 )
 
+func (k kind) String() string {
+	switch k {
+	case kNull:
+		return "null"
+	case kBool:
+		return "bool"
+	case kNum:
+		return "number"
+	case kStr:
+		return "string"
+	case kArr:
+		return "array"
+	case kObj:
+		return "object"
+	}
+	return "unknown"
+}
+
 // node is the intermediate representation produced by the tolerant parser,
 // before it is coerced into a caller-supplied Go type. Scalars keep their raw
 // lexeme so coercion can decide how to interpret them: the string "5" can

@@ -2,15 +2,28 @@ package coerce
 
 import (
 	"encoding"
+	"fmt"
 	"reflect"
 )
 
+// CoerceError reports that the parsed output could not be shaped into the
+// target type — for example, bare prose where a struct was expected. The
+// runtime treats it as the signal to re-ask the model.
+type CoerceError struct {
+	Target string // the Go type that was expected
+	Got    string // the shape that was actually parsed
+}
+
+func (e *CoerceError) Error() string {
+	return fmt.Sprintf("coerce: cannot fit %s value into %s", e.Got, e.Target)
+}
+
 // Into parses possibly-messy model output and coerces it into a value of type
-// T. It never returns a hard error for merely-malformed input — it recovers
-// what it can and fills T on a best-effort basis; an error is returned only
-// for a structurally impossible target. Use Complete (via Stream) or check
-// individual fields when you need to know whether the model's output was
-// truncated.
+// T. It is tolerant of malformed-but-present input — fences, trailing commas,
+// loose scalars, truncation — recovering what it can on a best-effort basis.
+// It returns a *CoerceError only when the output cannot be shaped into T at
+// all, e.g. bare prose where a struct was expected; the runtime uses that as
+// its cue to re-ask the model.
 func Into[T any](raw string) (T, error) {
 	var out T
 	t := reflect.TypeOf((*T)(nil)).Elem()
@@ -108,7 +121,13 @@ func coerceNode(n node, t reflect.Type) (reflect.Value, error) {
 func coerceStruct(n node, t reflect.Type) (reflect.Value, error) {
 	out := reflect.New(t).Elem()
 	if n.kind != kObj {
-		return out, nil // tolerate: leave zero value
+		if n.kind == kNull {
+			return out, nil // absent/null: tolerate as zero value
+		}
+		// A present, non-object value (bare prose, a scalar) cannot fill a
+		// struct. This is the structural failure the runtime retries on:
+		// "the model did not return the requested shape".
+		return out, &CoerceError{Target: t.String(), Got: n.kind.String()}
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)

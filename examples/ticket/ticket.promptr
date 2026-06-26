@@ -1,0 +1,23 @@
+// A support-ticket extractor — the canonical promptr example.
+enum Severity { LOW HIGH CRITICAL }
+
+class Ticket {
+  title    string
+  severity Severity
+  tags     string[]
+  due_days int?
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ExtractTicket(text: string) -> Ticket {
+  client Default
+  prompt #"
+    Extract a support ticket from the user's message.
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  "#
+}
