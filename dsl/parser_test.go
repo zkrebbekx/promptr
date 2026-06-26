@@ -167,7 +167,7 @@ func TestParseUnterminatedRawStringDoesNotHang(t *testing.T) {
 
 		Convey("Then Parse returns rather than looping forever", func() {
 			done := make(chan struct{})
-			go func() { Parse(src); close(done) }()
+			go func() { _, _ = Parse(src); close(done) }()
 			select {
 			case <-done:
 			default:

@@ -1,0 +1,95 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --accent: #7ee787;
+  --link: #79c0ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  padding: 2rem 1.5rem 1rem;
+  text-align: center;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 2.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent);
+}
+
+.caret { animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+header p { margin: 0.4rem auto; max-width: 46rem; color: var(--muted); }
+.links a { color: var(--link); text-decoration: none; }
+.links a:hover { text-decoration: underline; }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem 1.5rem 3rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+.pane {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane h2 { margin: 0 0 0.2rem; font-size: 1.05rem; }
+.hint { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.85rem; }
+
+textarea, .out {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b0f14;
+  color: var(--fg);
+  padding: 0.7rem;
+  width: 100%;
+}
+
+textarea { height: 16rem; resize: vertical; outline: none; }
+textarea:focus { border-color: var(--accent); }
+
+.out {
+  margin: 0.6rem 0 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  min-height: 8rem;
+  flex: 1;
+}
+.out.error { color: #ff7b72; }
+
+footer {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  padding: 0.4rem 1rem;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+}

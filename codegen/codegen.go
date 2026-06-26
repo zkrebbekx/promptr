@@ -142,13 +142,13 @@ func (g *gen) renderPrompt(tmpl string, holes map[string]bool, ret dsl.TypeRef) 
 		if open > 0 {
 			parts = append(parts, quote(rest[:open]))
 		}
-		close := strings.Index(rest[open:], "}}")
-		if close < 0 {
+		end := strings.Index(rest[open:], "}}")
+		if end < 0 {
 			// no closing braces — treat remainder as literal
 			parts = append(parts, quote(rest))
 			break
 		}
-		inner := strings.TrimSpace(rest[open+2 : open+close])
+		inner := strings.TrimSpace(rest[open+2 : open+end])
 		switch {
 		case inner == "ctx.output_schema":
 			parts = append(parts, quote(g.schemaFor(ret)))
@@ -156,9 +156,9 @@ func (g *gen) renderPrompt(tmpl string, holes map[string]bool, ret dsl.TypeRef) 
 			g.usedFmt = true
 			parts = append(parts, "fmt.Sprint("+inner+")")
 		default:
-			parts = append(parts, quote(rest[open:open+close+2]))
+			parts = append(parts, quote(rest[open:open+end+2]))
 		}
-		rest = rest[open+close+2:]
+		rest = rest[open+end+2:]
 	}
 	if len(parts) == 0 {
 		return `""`

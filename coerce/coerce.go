@@ -6,24 +6,24 @@ import (
 	"reflect"
 )
 
-// CoerceError reports that the parsed output could not be shaped into the
-// target type — for example, bare prose where a struct was expected. The
-// runtime treats it as the signal to re-ask the model.
-type CoerceError struct {
+// Error reports that the parsed output could not be shaped into the target
+// type — for example, bare prose where a struct was expected. The runtime
+// treats it as the signal to re-ask the model.
+type Error struct {
 	Target string // the Go type that was expected
 	Got    string // the shape that was actually parsed
 }
 
-func (e *CoerceError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("coerce: cannot fit %s value into %s", e.Got, e.Target)
 }
 
 // Into parses possibly-messy model output and coerces it into a value of type
 // T. It is tolerant of malformed-but-present input — fences, trailing commas,
 // loose scalars, truncation — recovering what it can on a best-effort basis.
-// It returns a *CoerceError only when the output cannot be shaped into T at
-// all, e.g. bare prose where a struct was expected; the runtime uses that as
-// its cue to re-ask the model.
+// It returns an *Error only when the output cannot be shaped into T at all,
+// e.g. bare prose where a struct was expected; the runtime uses that as its
+// cue to re-ask the model.
 func Into[T any](raw string) (T, error) {
 	var out T
 	t := reflect.TypeOf((*T)(nil)).Elem()
@@ -127,7 +127,7 @@ func coerceStruct(n node, t reflect.Type) (reflect.Value, error) {
 		// A present, non-object value (bare prose, a scalar) cannot fill a
 		// struct. This is the structural failure the runtime retries on:
 		// "the model did not return the requested shape".
-		return out, &CoerceError{Target: t.String(), Got: n.kind.String()}
+		return out, &Error{Target: t.String(), Got: n.kind.String()}
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)

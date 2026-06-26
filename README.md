@@ -1,5 +1,6 @@
 # promptr
 
+[![CI](https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml/badge.svg)](https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zkrebbekx/promptr.svg)](https://pkg.go.dev/github.com/zkrebbekx/promptr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -7,34 +8,75 @@ Typed prompts for Go. `promptr` makes a language model's output **typed and
 reliable** — the way [BAML](https://github.com/BoundaryML/baml) does, but as
 idiomatic, dependency-free Go.
 
+Declare your prompts and their input/output types in a small `.promptr` schema;
+`promptr` compiles it to ordinary Go functions you call. Each generated function
+renders the prompt, calls a model through a tiny `Provider` interface **you**
+wire up (no vendor SDK in the core), and turns the loose reply into your typed
+value — retrying with the parse error fed back if the first attempt won't fit.
+
 Its core is **schema-aligned parsing**: instead of forcing a model into a rigid
 JSON mode (which empirically degrades answer quality), you let it write
 naturally and a tolerant, schema-driven parser coerces the result into your Go
-types — recovering from the prose preambles, Markdown fences, trailing commas,
+types — recovering from prose preambles, Markdown fences, trailing commas,
 single quotes, fuzzy enum spellings, and truncated objects that real model
 output is full of.
 
-> **Status:** the `coerce` kernel (below) is built and tested. The `.promptr`
-> DSL + compiler — declare a typed LLM function in a schema file and generate
-> the Go client — is in progress on top of it.
+```
+.promptr schema ──promptr generate──▶ typed Go function
+                                            │ renders prompt (schema baked in)
+                                            ▼
+                                    your Provider (any model)
+                                            │ loose text reply
+                                            ▼
+                            coerce ──▶ typed value  (retry on misfit)
+```
 
-## `coerce` — schema-aligned parser (available now)
+## The pipeline in one example
+
+```promptr
+// ticket.promptr
+enum Severity { LOW HIGH CRITICAL }
+
+class Ticket {
+  title    string
+  severity Severity
+  tags     string[]
+  due_days int?
+}
+
+client GPT4o { provider "openai" model "gpt-4o" }
+
+function ExtractTicket(text: string) -> Ticket {
+  client GPT4o
+  prompt #"
+    Extract a support ticket from the message.
+    {{ ctx.output_schema }}      // compiler injects a schema description of Ticket
+    Message: {{ text }}
+  "#
+}
+```
+
+```sh
+promptr generate ./...     # -> ticket.promptr.go
+```
+
+```go
+ticket, err := ExtractTicket(ctx, provider, "my server is down!!")
+// ticket.Severity == SeverityCRITICAL, even if the model wrote "critical priority"
+```
+
+The generated function bakes a human-readable schema of `Ticket` into the prompt
+(BAML's "show the model the shape you want" trick), then coerces the reply and
+re-asks on a parse miss — all in a few lines you can read.
+
+## `coerce` — the schema-aligned parser (usable on its own)
+
+Don't want the DSL? Use the kernel directly on the structs you already have:
 
 ```go
 import "github.com/zkrebbekx/promptr/coerce"
 
-type Severity string
-func (Severity) CoerceMembers() []string { return []string{"LOW", "HIGH", "CRITICAL"} }
-
-type Ticket struct {
-    Title    string   `json:"title"`
-    Severity Severity `json:"severity"`
-    Tags     []string `json:"tags"`
-    DueDays  int      `json:"due_days"`
-}
-
-// modelText is whatever the model actually returned — fences, prose and all.
-ticket, err := coerce.Into[Ticket](modelText)
+ticket, err := coerce.Into[Ticket](modelText) // modelText: fences, prose and all
 ```
 
 `coerce.Into[T]` digests input that `encoding/json` would reject outright:
@@ -48,22 +90,16 @@ ticket, err := coerce.Into[Ticket](modelText)
 | `{"severity": "high priority"}` into an enum | ✗ | ✓ fuzzy-matches → `HIGH` |
 | `{"title": "x", "tags": ["a",` (truncated) | ✗ | ✓ recovers what parsed |
 
-It also handles nested structs, `*T` optionals, maps, snake/camel/case-insensitive
-key matching, and a single value where a list was expected.
+Nested structs, `*T` optionals, maps, snake/camel/case-insensitive keys, and a
+single value where a list was expected are all handled. Bare prose where a
+struct was expected returns a `*coerce.Error` — the signal the runtime
+retries on.
 
 ### Discriminated unions
 
-The "classify into one of N shapes" case — a sealed interface of variants:
-
 ```go
-type Action interface{ isAction() }
-type Search   struct{ Query  string `json:"query"` }
-type Escalate struct{ Team, Reason string }
-func (Search) isAction()   {}
-func (Escalate) isAction() {}
-
 u := coerce.NewUnion(Search{}, Escalate{})
-act, err := coerce.ResolveInto[Action](modelText, u) // best-fit by shape, or by a "type" discriminator
+act, err := coerce.ResolveInto[Action](modelText, u) // best-fit by shape or "type" discriminator
 ```
 
 ### Streaming
@@ -75,15 +111,39 @@ for p := range coerce.Stream[Ticket](tokenChan) {
 }
 ```
 
+## Providers
+
+The core imports no LLM SDK. A `Provider` is one method:
+
+```go
+type Provider interface {
+    Complete(ctx context.Context, messages []Message) (string, error)
+}
+```
+
+- `providers/fake` — deterministic scripted replies for tests and the playground.
+- `providers/anthropic` — a real adapter over the Anthropic Messages API, built
+  on `net/http` alone. Import it only if you want it.
+
+Wiring any other model is a dozen lines of `net/http`.
+
 ## Install
 
 ```bash
+# library
 go get github.com/zkrebbekx/promptr
+
+# CLI compiler
+go install github.com/zkrebbekx/promptr/cmd/promptr@latest
 ```
 
-Zero dependencies. Nothing you import pulls in an LLM SDK — `coerce` works on
-the structs you already have, and the (upcoming) generated clients call a small
-`Provider` interface you wire to the model of your choice.
+Also published as a container image (`ghcr.io/zkrebbekx/promptr`) and a Homebrew
+cask.
+
+## Playground
+
+A WebAssembly playground (DSL → Go, and paste-messy-output → repaired value)
+runs entirely client-side: `playground/`, deployed to GitHub Pages.
 
 ## Develop
 
@@ -92,6 +152,7 @@ make test     # go test ./...
 make race     # -race
 make fuzz     # fuzz the tolerant parser
 make lint
+go generate ./...   # regenerate examples
 ```
 
 ## License

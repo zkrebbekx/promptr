@@ -290,9 +290,9 @@ func TestProseIntoStructIsCoerceError(t *testing.T) {
 	Convey("Given bare prose with no object for a struct target", t, func() {
 		_, err := coerce.Into[Ticket]("I'm sorry, I can't help with that.")
 
-		Convey("Then a *CoerceError is returned (the runtime's retry signal)", func() {
+		Convey("Then a *coerce.Error is returned (the runtime's retry signal)", func() {
 			So(err, ShouldNotBeNil)
-			var ce *coerce.CoerceError
+			var ce *coerce.Error
 			So(errors.As(err, &ce), ShouldBeTrue)
 			So(ce.Target, ShouldContainSubstring, "Ticket")
 		})
@@ -311,8 +311,7 @@ func TestProseIntoStructIsCoerceError(t *testing.T) {
 func TestNonNumericProseIsEmptyNotPanic(t *testing.T) {
 	Convey("Given prose with no parseable structure for an int target", t, func() {
 		Convey("When coerced", func() {
-			var f func()
-			f = func() { _, _ = coerce.Into[int](strings.Repeat("words ", 5)) }
+			f := func() { _, _ = coerce.Into[int](strings.Repeat("words ", 5)) }
 
 			Convey("Then it returns a zero value without panicking", func() {
 				So(f, ShouldNotPanic)

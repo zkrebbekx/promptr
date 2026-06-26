@@ -32,7 +32,7 @@ function ExtractTicket(text: string) -> Ticket {
 }
 `
 
-func generate(t *testing.T, source string) string {
+func generate(_ *testing.T, source string) string {
 	f, err := dsl.Parse(source)
 	So(err, ShouldBeNil)
 	out, err := Generate("tickets", f)

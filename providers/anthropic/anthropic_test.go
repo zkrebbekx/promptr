@@ -21,7 +21,7 @@ func TestComplete(t *testing.T) {
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &gotReq)
 			w.Header().Set("content-type", "application/json")
-			io.WriteString(w, `{"content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}`)
+			_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}`)
 		}))
 		defer srv.Close()
 
@@ -55,9 +55,9 @@ func TestComplete(t *testing.T) {
 	})
 
 	Convey("Given a server that returns an API error", t, func() {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
-			io.WriteString(w, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
+			_, _ = io.WriteString(w, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
 		}))
 		defer srv.Close()
 		c := New("sk-test", "m")

@@ -1,0 +1,32 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+    - gocritic
+    - unconvert
+  exclusions:
+    rules:
+      # goconvey is conventionally dot-imported in tests.
+      - path: _test\.go
+        linters:
+          - revive
+        text: dot-imports
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

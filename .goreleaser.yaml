@@ -1,0 +1,103 @@
+# GoReleaser config for the promptr CLI.
+# https://goreleaser.com
+version: 2
+
+# Ensure the tap token key always exists in .Env (empty when unset) so the
+# cask's token/skip_upload templates resolve both locally and in CI.
+env:
+  - HOMEBREW_TAP_GITHUB_TOKEN={{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}{{ end }}
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: promptr
+    main: ./cmd/promptr
+    binary: promptr
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+# Legacy dockers/docker_manifests: deprecated in favour of dockers_v2, but
+# dockers_v2 ships an empty build context (the binary is never staged), so the
+# Dockerfile COPY fails. These reliably copy the per-arch binary into context.
+dockers:
+  - id: amd64
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    use: buildx
+    image_templates:
+      - "ghcr.io/zkrebbekx/promptr:{{ .Version }}-amd64"
+      - "ghcr.io/zkrebbekx/promptr:latest-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.source=https://github.com/zkrebbekx/promptr"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+  - id: arm64
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    use: buildx
+    image_templates:
+      - "ghcr.io/zkrebbekx/promptr:{{ .Version }}-arm64"
+      - "ghcr.io/zkrebbekx/promptr:latest-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.source=https://github.com/zkrebbekx/promptr"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/zkrebbekx/promptr:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/zkrebbekx/promptr:{{ .Version }}-amd64"
+      - "ghcr.io/zkrebbekx/promptr:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/zkrebbekx/promptr:latest"
+    image_templates:
+      - "ghcr.io/zkrebbekx/promptr:latest-amd64"
+      - "ghcr.io/zkrebbekx/promptr:latest-arm64"
+
+homebrew_casks:
+  - name: promptr
+    description: Typed prompt DSL + schema-aligned parser and Go compiler, pure Go, no SDK
+    homepage: https://github.com/zkrebbekx/promptr
+    repository:
+      owner: zkrebbekx
+      name: homebrew-tap
+      # GoReleaser validates that token is exactly {{ .Env.VAR }} with no other
+      # interpolation. The top-level env: block guarantees this key exists.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # Auto-skips when the tap token isn't configured, so a release succeeds even
+    # before the tap secret exists; set the secret to enable publishing.
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser@users.noreply.github.com
+
+release:
+  # release-please already created the GitHub Release and tag; attach
+  # the built archives and checksums to it rather than creating a new one.
+  mode: append
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

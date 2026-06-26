@@ -5,3 +5,7 @@ coverage.txt
 /bin
 bin/
 dist/
+
+# WASM build artifacts (CI rebuilds; wasm_exec.js is toolchain-provided)
+playground/web/main.wasm
+playground/web/wasm_exec.js

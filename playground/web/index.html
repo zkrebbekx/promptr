@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>promptr playground</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>promptr<span class="caret">_</span></h1>
+  <p>Typed prompts for Go. Everything below runs client-side in WebAssembly —
+     no API calls.</p>
+  <p class="links">
+    <a href="https://github.com/zkrebbekx/promptr">GitHub</a> ·
+    <a href="https://pkg.go.dev/github.com/zkrebbekx/promptr">docs</a>
+  </p>
+</header>
+
+<main>
+  <section class="pane">
+    <h2>1 · DSL → Go</h2>
+    <p class="hint">A <code>.promptr</code> schema compiles to idiomatic Go.</p>
+    <textarea id="dsl" spellcheck="false"></textarea>
+    <pre id="go" class="out"></pre>
+  </section>
+
+  <section class="pane">
+    <h2>2 · Schema-aligned parse</h2>
+    <p class="hint">Paste the messy text a model actually emits — fences, prose,
+       trailing commas — and watch the tolerant parser repair it.</p>
+    <textarea id="messy" spellcheck="false"></textarea>
+    <pre id="json" class="out"></pre>
+  </section>
+</main>
+
+<footer>
+  <span id="status">loading WebAssembly…</span>
+</footer>
+
+<script src="wasm_exec.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

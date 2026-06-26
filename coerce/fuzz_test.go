@@ -19,7 +19,7 @@ func FuzzInto(f *testing.F) {
 	for _, s := range seeds {
 		f.Add(s)
 	}
-	f.Fuzz(func(t *testing.T, s string) {
+	f.Fuzz(func(_ *testing.T, s string) {
 		_, _ = coerce.Into[Ticket](s)
 		_, _ = coerce.Into[map[string]any](s)
 		_, _ = coerce.Into[[]int](s)

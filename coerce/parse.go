@@ -73,7 +73,7 @@ func (p *parser) skipWS() {
 			}
 		case c == '/' && p.i+1 < len(p.s) && p.s[p.i+1] == '*':
 			p.i += 2
-			for p.i+1 < len(p.s) && !(p.s[p.i] == '*' && p.s[p.i+1] == '/') {
+			for p.i+1 < len(p.s) && (p.s[p.i] != '*' || p.s[p.i+1] != '/') {
 				p.i++
 			}
 			p.i += 2
