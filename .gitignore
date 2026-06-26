@@ -1,0 +1,7 @@
+*.out
+coverage.html
+coverage.txt
+*.test
+/bin
+bin/
+dist/
