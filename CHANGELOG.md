@@ -1,0 +1,12 @@
+# Changelog
+
+## 0.1.0 (2026-06-26)
+
+
+### Features
+
+* **codegen+runtime:** .promptr -&gt; Go compiler, CLI, runtime, fake provider ([81c5c8a](https://github.com/zkrebbekx/promptr/commit/81c5c8a33c5b39589c56739c425726c2e6bd1a8e))
+* **coerce:** schema-aligned parser kernel ([f50cf8e](https://github.com/zkrebbekx/promptr/commit/f50cf8e19e74e6383156f8b164e6c5ecd437bc65))
+* **dsl:** .promptr lexer, parser and AST ([f5e1553](https://github.com/zkrebbekx/promptr/commit/f5e1553fc473fb66c92fb9d321431dc2d1ceb56c))
+* **playground+release:** WASM playground, CI/release pipeline, lint clean ([e1c088e](https://github.com/zkrebbekx/promptr/commit/e1c088e76bb0abf7fa4a6c7cd06d724bb499da3a))
+* **providers:** net/http Anthropic Messages adapter (no SDK) ([b9bf6a0](https://github.com/zkrebbekx/promptr/commit/b9bf6a09873d32eb3e812971f286e8e9d6b5f2a3))
