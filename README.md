@@ -4,6 +4,8 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/zkrebbekx/promptr.svg)](https://pkg.go.dev/github.com/zkrebbekx/promptr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**[▶ Try it live in the playground](https://zkrebbekx.github.io/promptr/)** — compile `.promptr` → Go, format a schema, and watch the tolerant parser repair messy output, all client-side in your browser.
+
 Typed prompts for Go. `promptr` makes a language model's output **typed and
 reliable** — the way [BAML](https://github.com/BoundaryML/baml) does, but as
 idiomatic, dependency-free Go.
@@ -437,8 +439,13 @@ cask.
 
 ## Playground
 
-A WebAssembly playground (DSL → Go, and paste-messy-output → repaired value)
-runs entirely client-side: `playground/`, deployed to GitHub Pages.
+A WebAssembly playground runs entirely client-side — no API calls — at
+**[zkrebbekx.github.io/promptr](https://zkrebbekx.github.io/promptr/)**. It has a
+clickable gallery of examples (typed extraction, unions & attributes, streaming,
+`@assert`/`@check` validation, the tool-calling agent loop) plus a live
+`promptr fmt` button and the messy-output → repaired-value parser. Source in
+[`playground/`](playground/); deployed to GitHub Pages from tagged `main`, so it
+always reflects the latest release.
 
 ## Develop
 
