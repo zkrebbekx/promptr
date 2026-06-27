@@ -11,7 +11,18 @@ const EXAMPLES = [
   {
     id: "extract",
     label: "Typed extraction",
-    blurb: "The basics: an enum + class become a typed Go function whose output schema is baked into the prompt.",
+    blurb: "The basics: an enum + class become a typed Go function whose output schema is baked into the prompt. The right pane shows the messy reply a model gives for this schema — and the parser repairing it.",
+    messy: `Sure! Here's the ticket:
+
+\`\`\`json
+{
+  title: 'Server is down',
+  severity: 'critical priority',
+  tags: ['outage', 'prod',],
+  due_days: "1"
+}
+\`\`\`
+Hope that helps!`,
     dsl: `enum Severity { LOW HIGH CRITICAL }
 
 class Ticket {
@@ -38,7 +49,13 @@ function ExtractTicket(text: string) -> Ticket {
   {
     id: "union",
     label: "Unions & attributes",
-    blurb: "A union return compiles to a sealed interface; @description / @alias tune the schema and wire names; map<string,V> is supported. (v0.3)",
+    blurb: "A union return compiles to a sealed interface; @description / @alias tune the schema and wire names; map<string,V> is supported. The right pane repairs a model's Search reply (note the max_results alias). (v0.3)",
+    messy: `I'll search for that.
+
+{
+  "query": "wireless headphones under $100",
+  "max_results": "5",
+}`,
     dsl: `class Search {
   query string @description("the search terms to look up")
   topk  int    @alias("max_results")
@@ -68,7 +85,17 @@ function Route(message: string) -> Action {
   {
     id: "stream",
     label: "Streaming",
-    blurb: "-> stream T compiles to a function returning a channel of progressively-coerced partial values. (v0.4)",
+    blurb: "-> stream T compiles to a function returning a channel of progressively-coerced partial values. The right pane shows a full Summary reply repaired into clean JSON. (v0.4)",
+    messy: `Here's the summary:
+\`\`\`json
+{
+  headline: "Quarterly revenue beats estimates",
+  bullets: [
+    'Revenue up 12% YoY',
+    'Cloud segment led growth',
+  ]
+}
+\`\`\``,
     dsl: `class Summary {
   headline string @description("a one-line title")
   bullets  string[]
@@ -91,7 +118,14 @@ function SummarizeArticle(article: string) -> stream Summary {
   {
     id: "validate",
     label: "Validation",
-    blurb: "@assert rules are hard (a violation is fed back to the model as a repair re-ask); @check rules are soft (surfaced to a sink). Both compile to valx tags. (v0.8)",
+    blurb: "@assert rules are hard (a violation is fed back to the model as a repair re-ask); @check rules are soft (surfaced to a sink). Both compile to valx tags. The right pane repairs a raw Account reply. (v0.8)",
+    messy: `{
+  "email": "ada@example.com",
+  "username": "ada",
+  "age": "31",
+  "plan": "enterprise tier",
+  "seats": "12"
+}`,
     dsl: `enum Plan { FREE PRO ENTERPRISE }
 
 class Account {
@@ -119,7 +153,16 @@ function ExtractAccount(text: string) -> Account {
   {
     id: "tools",
     label: "Tool-calling agent",
-    blurb: "tools [...] turns a function into a bounded agent loop: the model calls typed Go tools, results feed back, and you still get a typed value. (v0.6)",
+    blurb: "tools [...] turns a function into a bounded agent loop: the model calls typed Go tools, results feed back, and you still get a typed value. The right pane repairs the loop's final Itinerary answer. (v0.6)",
+    messy: `Done planning! Here's the itinerary:
+
+\`\`\`json
+{
+  destination: 'Reykjavik',
+  summary: "chase the aurora",
+  packing: ['thermal layers', 'camera',]
+}
+\`\`\``,
     dsl: `class Weather {
   city       string
   conditions string
@@ -163,7 +206,12 @@ function PlanTrip(goal: string) -> Itinerary {
   {
     id: "multiagent",
     label: "Multi-agent",
-    blurb: "List a function in another function's tools and it becomes a self-contained sub-agent — auto-wired, no handler. The orchestrator (WriteBrief) takes no handlers struct; its loop calls ResearchTopic directly. (v0.14)",
+    blurb: "List a function in another function's tools and it becomes a self-contained sub-agent — auto-wired, no handler. The orchestrator (WriteBrief) takes no handlers struct; its loop calls ResearchTopic directly. The right pane repairs the coordinator's final Brief. (v0.14)",
+    messy: `Based on the research, here's the brief:
+{
+  "topic": "tidal energy",
+  "recommendation": 'pilot a 2MW array',
+}`,
     dsl: `class Research {
   summary string
   sources string[]
@@ -202,7 +250,13 @@ function WriteBrief(request: string) -> Brief {
   {
     id: "livetest",
     label: "Live tests",
-    blurb: "A test block compiles to a runnable Go test that calls the function and asserts the typed result field-by-field — see the appended _test.go below. (v0.13)",
+    blurb: "A test block compiles to a runnable Go test that calls the function and asserts the typed result field-by-field — see the appended _test.go below. The right pane shows the messy reply those assertions repair + check. (v0.13)",
+    messy: `{
+  title: "Server is down",
+  severity: 'CRITICAL',
+  open: "true",
+  votes: "3",
+}`,
     dsl: `enum Severity { LOW HIGH CRITICAL }
 
 class Ticket {
@@ -242,7 +296,12 @@ test outage {
   {
     id: "fmt",
     label: "Formatter (try it!)",
-    blurb: "promptr fmt canonicalizes layout and preserves comments. This snippet is deliberately mis-aligned — hit Format to clean it up. (v0.12)",
+    blurb: "promptr fmt canonicalizes layout and preserves comments. This snippet is deliberately mis-aligned — hit Format to clean it up. The right pane repairs a raw Account reply for this schema. (v0.12)",
+    messy: `{
+  email: 'ada@example.com',
+  username: "ada",
+  plan: 'high',
+}`,
     dsl: `// a deliberately messy schema — click "Format" to canonicalize it
 enum   Sev {  LOW    HIGH }
 
@@ -313,10 +372,16 @@ function flash(btn, msg) {
 function loadExample(ex) {
   $("dsl").value = ex.dsl;
   $("blurb").textContent = ex.blurb;
+  // Each example is one coherent story: the left pane compiles the schema, the
+  // right pane repairs the messy reply a model gives for that same schema.
+  if (ex.messy) {
+    $("messy").value = ex.messy;
+  }
   for (const chip of document.querySelectorAll(".chip")) {
     chip.classList.toggle("active", chip.dataset.id === ex.id);
   }
   runGenerate();
+  runParse();
 }
 
 function buildGallery() {
@@ -333,26 +398,13 @@ function buildGallery() {
 
 function boot() {
   buildGallery();
-  loadExample(EXAMPLES[0]);
-  $("messy").value = sampleMessy;
   $("dsl").addEventListener("input", debounce(runGenerate, 150));
   $("messy").addEventListener("input", debounce(runParse, 150));
   $("fmt-btn").addEventListener("click", runFormat);
-  runParse();
+  // loadExample seeds both panes (schema + matching messy reply) and runs both.
+  loadExample(EXAMPLES[0]);
   $("status").textContent = "ready · promptr " + VERSION + " · WebAssembly";
 }
-
-const sampleMessy = `Sure! Here's the ticket:
-
-\`\`\`json
-{
-  title: 'Server is down',
-  severity: 'critical priority',
-  tags: ['outage', 'prod',],
-  due_days: "1"
-}
-\`\`\`
-Hope that helps!`;
 
 const go = new Go();
 WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject)
