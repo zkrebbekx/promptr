@@ -221,3 +221,91 @@ func TestMultimodalContent(t *testing.T) {
 		})
 	})
 }
+
+func TestStreamToolsText(t *testing.T) {
+	Convey("Given a Messages stream emitting only text_delta events", t, func() {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("content-type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			emit := func(s string) {
+				_, _ = io.WriteString(w, "data: "+s+"\n\n")
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			emit(`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`)
+			for _, tok := range []string{`{"to`, `tal":`, `5}`} {
+				enc, _ := json.Marshal(tok)
+				emit(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(enc) + `}}`)
+			}
+			emit(`{"type":"message_stop"}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "claude-opus-4-8")
+		c.BaseURL = srv.URL
+
+		Convey("When StreamTools is drained then Reply called", func() {
+			ts, err := c.StreamTools(context.Background(), []promptr.Message{{Role: "user", Content: "hi"}}, nil)
+			So(err, ShouldBeNil)
+			var got string
+			for tok := range ts.Deltas {
+				got += tok
+			}
+			reply, rerr := ts.Reply()
+			So(rerr, ShouldBeNil)
+
+			Convey("Then deltas reassemble and Reply carries the text, no calls", func() {
+				So(got, ShouldEqual, `{"total":5}`)
+				So(reply.Calls, ShouldBeEmpty)
+				So(reply.Text, ShouldEqual, `{"total":5}`)
+			})
+		})
+	})
+}
+
+func TestStreamToolsCalls(t *testing.T) {
+	Convey("Given a Messages stream emitting a tool_use block across input_json_delta fragments", t, func() {
+		var gotStream, gotTools bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			gotStream, _ = body["stream"].(bool)
+			_, gotTools = body["tools"]
+			w.Header().Set("content-type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			emit := func(s string) {
+				_, _ = io.WriteString(w, "data: "+s+"\n\n")
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			emit(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_a","name":"add"}}`)
+			emit(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}`)
+			emit(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"2,\"b\":3}"}}`)
+			emit(`{"type":"content_block_stop","index":0}`)
+			emit(`{"type":"message_stop"}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "claude-opus-4-8")
+		c.BaseURL = srv.URL
+
+		Convey("When StreamTools is consumed", func() {
+			ts, err := c.StreamTools(context.Background(), []promptr.Message{{Role: "user", Content: "add"}}, []promptr.ToolDef{{Name: "add", Params: "a,b"}})
+			So(err, ShouldBeNil)
+			for tok := range ts.Deltas {
+				_ = tok
+			}
+			reply, rerr := ts.Reply()
+			So(rerr, ShouldBeNil)
+
+			Convey("Then the request streamed tools and the tool_use input reassembled", func() {
+				So(gotStream, ShouldBeTrue)
+				So(gotTools, ShouldBeTrue)
+				So(reply.Calls, ShouldHaveLength, 1)
+				So(reply.Calls[0].ID, ShouldEqual, "toolu_a")
+				So(reply.Calls[0].Name, ShouldEqual, "add")
+				So(reply.Calls[0].Arguments, ShouldEqual, `{"a":2,"b":3}`)
+			})
+		})
+	})
+}

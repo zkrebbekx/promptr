@@ -33,11 +33,12 @@ type Reply struct {
 	Calls []promptr.ToolCall
 }
 
-// static assertions: Provider satisfies all three runtime contracts.
+// static assertions: Provider satisfies all four runtime contracts.
 var (
-	_ promptr.Provider       = (*Provider)(nil)
-	_ promptr.StreamProvider = (*Provider)(nil)
-	_ promptr.ToolProvider   = (*Provider)(nil)
+	_ promptr.Provider           = (*Provider)(nil)
+	_ promptr.StreamProvider     = (*Provider)(nil)
+	_ promptr.ToolProvider       = (*Provider)(nil)
+	_ promptr.StreamToolProvider = (*Provider)(nil)
 )
 
 // New builds a Provider scripted with the given replies.
@@ -63,6 +64,50 @@ func (p *Provider) CompleteTools(_ context.Context, msgs []promptr.Message, _ []
 	p.tn++
 	r := p.ToolReplies[i]
 	return promptr.Reply{Text: r.Text, Calls: r.Calls}, nil
+}
+
+// StreamTools scripts a streamed tool-enabled turn from the same ToolReplies
+// slice CompleteTools walks. A final-text Reply streams its Text in chunks (so
+// the partial-coerce path is exercised); a tool-call Reply streams nothing and
+// hands back its Calls. It implements promptr.StreamToolProvider.
+func (p *Provider) StreamTools(ctx context.Context, msgs []promptr.Message, _ []promptr.ToolDef) (promptr.ToolStream, error) {
+	p.Calls = append(p.Calls, msgs)
+	if len(p.ToolReplies) == 0 {
+		return promptr.ToolStream{}, fmt.Errorf("fake: no scripted tool replies")
+	}
+	i := p.tn
+	if i >= len(p.ToolReplies) {
+		i = len(p.ToolReplies) - 1
+	}
+	p.tn++
+	r := p.ToolReplies[i]
+
+	size := p.ChunkSize
+	if size <= 0 {
+		size = defaultChunkSize
+	}
+	deltas := make(chan string)
+	go func() {
+		defer close(deltas)
+		if len(r.Calls) > 0 {
+			return // a tool-call turn carries no streamed text
+		}
+		for j := 0; j < len(r.Text); j += size {
+			end := j + size
+			if end > len(r.Text) {
+				end = len(r.Text)
+			}
+			select {
+			case deltas <- r.Text[j:end]:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return promptr.ToolStream{
+		Deltas: deltas,
+		Reply:  func() (promptr.Reply, error) { return promptr.Reply{Text: r.Text, Calls: r.Calls}, nil },
+	}, nil
 }
 
 func (p *Provider) nextReply() (string, error) {

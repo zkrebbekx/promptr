@@ -274,11 +274,21 @@ func (c *Client) CompleteTools(ctx context.Context, messages []promptr.Message, 
 	return promptr.Reply{Text: msg.Content}, nil
 }
 
-// streamChunk is one server-sent delta in a streaming completion.
+// streamChunk is one server-sent delta in a streaming completion. tool_calls
+// arrive incrementally too: each carries an index, the id/name on its first
+// fragment, and a slice of the arguments JSON string to be concatenated by index.
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 }
@@ -346,6 +356,112 @@ func (c *Client) Stream(ctx context.Context, messages []promptr.Message) (<-chan
 	return out, nil
 }
 
+// toolAccum accumulates one streamed tool call across its argument fragments.
+type toolAccum struct {
+	id, name string
+	args     strings.Builder
+}
+
+// StreamTools sends the conversation plus the available tools with stream:true
+// and returns a ToolStream: text deltas flow on the channel as they arrive, while
+// streamed tool_calls are accumulated by index and surfaced through Reply once
+// the stream ends. It implements promptr.StreamToolProvider, letting the runtime
+// stream the final answer of a tool-using agent loop. The text channel must be
+// fully drained before Reply is called (cancel ctx to abandon early).
+func (c *Client) StreamTools(ctx context.Context, messages []promptr.Message, tools []promptr.ToolDef) (promptr.ToolStream, error) {
+	if c.APIKey == "" {
+		return promptr.ToolStream{}, fmt.Errorf("openai: empty API key")
+	}
+	body := reqBody{Model: c.Model, Messages: buildMessages(messages), Tools: toAPITools(tools), Stream: true}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+c.APIKey)
+	req.Header.Set("accept", "text/event-stream")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		return promptr.ToolStream{}, fmt.Errorf("openai: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	deltas := make(chan string)
+	var text strings.Builder
+	var order []int
+	byIndex := map[int]*toolAccum{}
+	done := make(chan struct{})
+
+	go func() {
+		defer close(deltas)
+		defer close(done)
+		defer func() { _ = resp.Body.Close() }()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			data, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "data:")
+			if !ok {
+				continue
+			}
+			data = strings.TrimSpace(data)
+			if data == "[DONE]" {
+				return
+			}
+			var ch streamChunk
+			if json.Unmarshal([]byte(data), &ch) != nil || len(ch.Choices) == 0 {
+				continue
+			}
+			d := ch.Choices[0].Delta
+			if d.Content != "" {
+				text.WriteString(d.Content)
+				select {
+				case deltas <- d.Content:
+				case <-ctx.Done():
+					return
+				}
+			}
+			for _, tc := range d.ToolCalls {
+				acc, seen := byIndex[tc.Index]
+				if !seen {
+					acc = &toolAccum{}
+					byIndex[tc.Index] = acc
+					order = append(order, tc.Index)
+				}
+				if tc.ID != "" {
+					acc.id = tc.ID
+				}
+				if tc.Function.Name != "" {
+					acc.name = tc.Function.Name
+				}
+				acc.args.WriteString(tc.Function.Arguments)
+			}
+		}
+	}()
+
+	reply := func() (promptr.Reply, error) {
+		<-done
+		if len(order) > 0 {
+			calls := make([]promptr.ToolCall, 0, len(order))
+			for _, idx := range order {
+				acc := byIndex[idx]
+				calls = append(calls, promptr.ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})
+			}
+			return promptr.Reply{Calls: calls}, nil
+		}
+		return promptr.Reply{Text: text.String()}, nil
+	}
+	return promptr.ToolStream{Deltas: deltas, Reply: reply}, nil
+}
+
 func (c *Client) baseURL() string {
 	if c.BaseURL == "" {
 		return defaultBaseURL
@@ -367,9 +483,10 @@ func trimSlash(s string) string {
 	return s
 }
 
-// static assertions: Client satisfies all three runtime contracts.
+// static assertions: Client satisfies all four runtime contracts.
 var (
-	_ promptr.Provider       = (*Client)(nil)
-	_ promptr.StreamProvider = (*Client)(nil)
-	_ promptr.ToolProvider   = (*Client)(nil)
+	_ promptr.Provider           = (*Client)(nil)
+	_ promptr.StreamProvider     = (*Client)(nil)
+	_ promptr.ToolProvider       = (*Client)(nil)
+	_ promptr.StreamToolProvider = (*Client)(nil)
 )

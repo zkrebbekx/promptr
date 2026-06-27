@@ -213,3 +213,87 @@ func TestStream(t *testing.T) {
 		})
 	})
 }
+
+func TestStreamToolsText(t *testing.T) {
+	Convey("Given a streaming server that emits only text deltas", t, func() {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("content-type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			for _, tok := range []string{`{"to`, `tal":`, `5}`} {
+				enc, _ := json.Marshal(tok)
+				_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":`+string(enc)+`}}]}`+"\n\n")
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		}))
+		defer srv.Close()
+		c := New("sk-test", "gpt-4o")
+		c.BaseURL = srv.URL
+
+		Convey("When StreamTools is drained then Reply called", func() {
+			ts, err := c.StreamTools(context.Background(), []promptr.Message{{Role: "user", Content: "hi"}}, nil)
+			So(err, ShouldBeNil)
+			var got string
+			for tok := range ts.Deltas {
+				got += tok
+			}
+			reply, rerr := ts.Reply()
+			So(rerr, ShouldBeNil)
+
+			Convey("Then deltas reassemble and Reply carries the full text, no calls", func() {
+				So(got, ShouldEqual, `{"total":5}`)
+				So(reply.Calls, ShouldBeEmpty)
+				So(reply.Text, ShouldEqual, `{"total":5}`)
+			})
+		})
+	})
+}
+
+func TestStreamToolsCalls(t *testing.T) {
+	Convey("Given a streaming server that emits tool_call deltas across fragments", t, func() {
+		var gotStream, gotTools bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			gotStream, _ = body["stream"].(bool)
+			_, gotTools = body["tools"]
+			w.Header().Set("content-type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			frames := []string{
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"add","arguments":"{\"a\":"}}]}}]}`,
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"2,\"b\":3}"}}]}}]}`,
+			}
+			for _, f := range frames {
+				_, _ = io.WriteString(w, "data: "+f+"\n\n")
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		}))
+		defer srv.Close()
+		c := New("sk-test", "gpt-4o")
+		c.BaseURL = srv.URL
+
+		Convey("When StreamTools is consumed", func() {
+			ts, err := c.StreamTools(context.Background(), []promptr.Message{{Role: "user", Content: "add"}}, []promptr.ToolDef{{Name: "add", Params: "a,b"}})
+			So(err, ShouldBeNil)
+			for tok := range ts.Deltas {
+				_ = tok
+			}
+			reply, rerr := ts.Reply()
+			So(rerr, ShouldBeNil)
+
+			Convey("Then the request was a streamed tool call and the fragments reassembled", func() {
+				So(gotStream, ShouldBeTrue)
+				So(gotTools, ShouldBeTrue)
+				So(reply.Calls, ShouldHaveLength, 1)
+				So(reply.Calls[0].ID, ShouldEqual, "call_a")
+				So(reply.Calls[0].Name, ShouldEqual, "add")
+				So(reply.Calls[0].Arguments, ShouldEqual, `{"a":2,"b":3}`)
+			})
+		})
+	})
+}

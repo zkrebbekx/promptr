@@ -286,13 +286,22 @@ func (c *Client) CompleteTools(ctx context.Context, messages []promptr.Message, 
 	return promptr.Reply{Text: sb.String()}, nil
 }
 
-// streamEvent is one decoded SSE `data:` payload from the Messages stream. We
-// only care about text deltas; other event types are ignored.
+// streamEvent is one decoded SSE `data:` payload from the Messages stream. Stream
+// reads only text deltas; StreamTools additionally reads content_block_start (a
+// tool_use block's id/name) and input_json_delta (the block's argument
+// fragments), keyed by Index.
 type streamEvent struct {
-	Type  string `json:"type"`
-	Delta struct {
+	Type         string `json:"type"`
+	Index        int    `json:"index"`
+	ContentBlock struct {
 		Type string `json:"type"`
-		Text string `json:"text"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"content_block"`
+	Delta struct {
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 }
 
@@ -358,6 +367,112 @@ func (c *Client) Stream(ctx context.Context, messages []promptr.Message) (<-chan
 	return out, nil
 }
 
+// toolAccum accumulates one streamed tool_use block across its input fragments.
+type toolAccum struct {
+	id, name string
+	args     strings.Builder
+}
+
+// StreamTools sends the conversation plus the available tools with stream:true
+// and returns a ToolStream: text_delta events flow on the channel as they
+// arrive, while tool_use blocks are accumulated by index (id/name from
+// content_block_start, arguments from input_json_delta fragments) and surfaced
+// through Reply once the stream ends. It implements promptr.StreamToolProvider.
+// The text channel must be fully drained before Reply is called (cancel ctx to
+// abandon early).
+func (c *Client) StreamTools(ctx context.Context, messages []promptr.Message, tools []promptr.ToolDef) (promptr.ToolStream, error) {
+	if c.APIKey == "" {
+		return promptr.ToolStream{}, fmt.Errorf("anthropic: empty API key")
+	}
+	body := reqBody{Model: c.Model, MaxTokens: c.maxTokens(), Tools: toAnthropicTools(tools), Stream: true}
+	body.System, body.Messages = splitSystem(messages)
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/messages", bytes.NewReader(buf))
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", c.version())
+	req.Header.Set("accept", "text/event-stream")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return promptr.ToolStream{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		return promptr.ToolStream{}, fmt.Errorf("anthropic: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	deltas := make(chan string)
+	var text strings.Builder
+	var order []int
+	byIndex := map[int]*toolAccum{}
+	done := make(chan struct{})
+
+	go func() {
+		defer close(deltas)
+		defer close(done)
+		defer func() { _ = resp.Body.Close() }()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			data, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "data:")
+			if !ok {
+				continue
+			}
+			var ev streamEvent
+			if json.Unmarshal([]byte(strings.TrimSpace(data)), &ev) != nil {
+				continue
+			}
+			switch ev.Type {
+			case "message_stop":
+				return
+			case "content_block_start":
+				if ev.ContentBlock.Type == "tool_use" {
+					byIndex[ev.Index] = &toolAccum{id: ev.ContentBlock.ID, name: ev.ContentBlock.Name}
+					order = append(order, ev.Index)
+				}
+			case "content_block_delta":
+				switch ev.Delta.Type {
+				case "text_delta":
+					if ev.Delta.Text != "" {
+						text.WriteString(ev.Delta.Text)
+						select {
+						case deltas <- ev.Delta.Text:
+						case <-ctx.Done():
+							return
+						}
+					}
+				case "input_json_delta":
+					if acc := byIndex[ev.Index]; acc != nil {
+						acc.args.WriteString(ev.Delta.PartialJSON)
+					}
+				}
+			}
+		}
+	}()
+
+	reply := func() (promptr.Reply, error) {
+		<-done
+		if len(order) > 0 {
+			calls := make([]promptr.ToolCall, 0, len(order))
+			for _, idx := range order {
+				acc := byIndex[idx]
+				calls = append(calls, promptr.ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})
+			}
+			return promptr.Reply{Calls: calls}, nil
+		}
+		return promptr.Reply{Text: text.String()}, nil
+	}
+	return promptr.ToolStream{Deltas: deltas, Reply: reply}, nil
+}
+
 func (c *Client) maxTokens() int {
 	if c.MaxTokens <= 0 {
 		return defaultMaxTokens
@@ -386,9 +501,10 @@ func (c *Client) httpClient() *http.Client {
 	return c.HTTP
 }
 
-// static assertions: Client satisfies all three runtime contracts.
+// static assertions: Client satisfies all four runtime contracts.
 var (
-	_ promptr.Provider       = (*Client)(nil)
-	_ promptr.StreamProvider = (*Client)(nil)
-	_ promptr.ToolProvider   = (*Client)(nil)
+	_ promptr.Provider           = (*Client)(nil)
+	_ promptr.StreamProvider     = (*Client)(nil)
+	_ promptr.ToolProvider       = (*Client)(nil)
+	_ promptr.StreamToolProvider = (*Client)(nil)
 )
