@@ -298,7 +298,9 @@ The loop dispatches each requested tool, feeds the result back, and repeats up
 to `Options.MaxSteps` (default 8) until the model answers — coerced into
 `Itinerary`. Unknown-tool and handler-error turns are fed back as text so the
 model can recover rather than aborting. `promptr.RunTools[T]` is usable directly,
-too. Works on providers implementing the optional `ToolProvider` interface —
+too. When the model requests several tools in one turn, pass
+`promptr.ParallelTools()` to dispatch them concurrently (results still feed back
+in request order; opt in only when your handlers are goroutine-safe). Works on providers implementing the optional `ToolProvider` interface —
 `openai`, `anthropic`, `gemini` (native `functionDeclarations`), `ollama`
 (native `/api/chat` tools), and `fake`; others return a clear "does not support
 tool calls" error. See `examples/agent`.

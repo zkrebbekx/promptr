@@ -3,6 +3,7 @@ package promptr
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // ToolDef describes a tool offered to the model: its name, a one-line
@@ -105,14 +106,12 @@ func RunTools[T any](ctx context.Context, p Provider, prompt string, tools []Too
 		}
 
 		// Echo the assistant's tool-call turn, then append each tool's result so
-		// the model can use it on the next turn.
+		// the model can use it on the next turn. Results keep request order even
+		// when dispatched concurrently.
 		msgs = append(msgs, Message{Role: "assistant", ToolCalls: reply.Calls})
-		for _, call := range reply.Calls {
-			msgs = append(msgs, Message{
-				Role:       "tool",
-				ToolCallID: call.ID,
-				Content:    dispatch(ctx, byName, call),
-			})
+		results := runCalls(ctx, byName, reply.Calls, opts.ParallelTools)
+		for i, call := range reply.Calls {
+			msgs = append(msgs, Message{Role: "tool", ToolCallID: call.ID, Content: results[i]})
 		}
 	}
 
@@ -120,6 +119,31 @@ func RunTools[T any](ctx context.Context, p Provider, prompt string, tools []Too
 		return zero, lastErr
 	}
 	return zero, fmt.Errorf("promptr: tool loop did not converge within %d steps", steps)
+}
+
+// runCalls executes the tool calls of a single model turn and returns their
+// results in request order. When parallel is set and there is more than one call,
+// each runs in its own goroutine — the calls of one turn are independent, so a
+// model that requests several at once gets them dispatched concurrently. Each
+// goroutine writes only its own slot, so no result is shared between them.
+func runCalls(ctx context.Context, byName map[string]Tool, calls []ToolCall, parallel bool) []string {
+	results := make([]string, len(calls))
+	if !parallel || len(calls) <= 1 {
+		for i, call := range calls {
+			results[i] = dispatch(ctx, byName, call)
+		}
+		return results
+	}
+	var wg sync.WaitGroup
+	wg.Add(len(calls))
+	for i, call := range calls {
+		go func(i int, call ToolCall) {
+			defer wg.Done()
+			results[i] = dispatch(ctx, byName, call)
+		}(i, call)
+	}
+	wg.Wait()
+	return results
 }
 
 // dispatch runs one tool call, returning the result JSON, or an error message as

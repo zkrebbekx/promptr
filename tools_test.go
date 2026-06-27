@@ -3,7 +3,10 @@ package promptr
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -149,6 +152,99 @@ func TestRunToolsRequiresToolProvider(t *testing.T) {
 			Convey("Then it returns a clear error", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "does not support tool calls")
+			})
+		})
+	})
+}
+
+func TestRunToolsParallelDispatch(t *testing.T) {
+	Convey("Given a turn that requests three independent tool calls", t, func() {
+		calls := []ToolCall{
+			{ID: "a", Name: "slow", Arguments: `"0"`},
+			{ID: "b", Name: "slow", Arguments: `"1"`},
+			{ID: "c", Name: "slow", Arguments: `"2"`},
+		}
+		p := &scriptedTP{replies: []Reply{{Calls: calls}, {Text: `{"total":3}`}}}
+
+		// Each handler signals arrival then blocks until released; the barrier only
+		// clears if all three run concurrently. It echoes its argument so result
+		// ordering can be asserted.
+		var started sync.WaitGroup
+		started.Add(len(calls))
+		release := make(chan struct{})
+		var cur, maxC int32
+		slow := Tool{Def: ToolDef{Name: "slow"}, Invoke: func(_ context.Context, args string) (string, error) {
+			c := atomic.AddInt32(&cur, 1)
+			for {
+				m := atomic.LoadInt32(&maxC)
+				if c <= m || atomic.CompareAndSwapInt32(&maxC, m, c) {
+					break
+				}
+			}
+			started.Done()
+			<-release
+			atomic.AddInt32(&cur, -1)
+			return args, nil
+		}}
+
+		go func() { started.Wait(); close(release) }()
+
+		Convey("When RunTools dispatches them with ParallelTools enabled", func() {
+			got, err := RunTools[sum](context.Background(), p, "go", []Tool{slow}, Options{ParallelTools: true})
+			So(err, ShouldBeNil)
+			So(got.Total, ShouldEqual, 3)
+
+			Convey("Then all three ran concurrently", func() {
+				So(atomic.LoadInt32(&maxC), ShouldEqual, 3)
+			})
+
+			Convey("Then results were fed back in request order", func() {
+				second := p.seen[1]
+				var results []Message
+				for _, m := range second {
+					if m.Role == "tool" {
+						results = append(results, m)
+					}
+				}
+				So(results, ShouldHaveLength, 3)
+				So(results[0].ToolCallID, ShouldEqual, "a")
+				So(results[0].Content, ShouldEqual, `"0"`)
+				So(results[1].ToolCallID, ShouldEqual, "b")
+				So(results[2].ToolCallID, ShouldEqual, "c")
+			})
+		})
+	})
+}
+
+func TestRunToolsSequentialByDefault(t *testing.T) {
+	Convey("Given two tool calls and the default (sequential) dispatch", t, func() {
+		p := &scriptedTP{replies: []Reply{
+			{Calls: []ToolCall{
+				{ID: "a", Name: "track", Arguments: `{}`},
+				{ID: "b", Name: "track", Arguments: `{}`},
+			}},
+			{Text: `{"total":0}`},
+		}}
+		var cur, maxC int32
+		track := Tool{Def: ToolDef{Name: "track"}, Invoke: func(_ context.Context, _ string) (string, error) {
+			c := atomic.AddInt32(&cur, 1)
+			for {
+				m := atomic.LoadInt32(&maxC)
+				if c <= m || atomic.CompareAndSwapInt32(&maxC, m, c) {
+					break
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+			atomic.AddInt32(&cur, -1)
+			return "{}", nil
+		}}
+
+		Convey("When RunTools drives the loop without ParallelTools", func() {
+			_, err := RunTools[sum](context.Background(), p, "go", []Tool{track}, Options{})
+			So(err, ShouldBeNil)
+
+			Convey("Then the calls never overlapped", func() {
+				So(atomic.LoadInt32(&maxC), ShouldEqual, 1)
 			})
 		})
 	})
