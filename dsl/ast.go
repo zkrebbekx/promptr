@@ -12,8 +12,21 @@ type File struct {
 	Classes []ClassDecl
 	Unions  []UnionDecl
 	Clients []ClientDecl
+	Tools   []ToolDecl
 	Funcs   []FuncDecl
 	Tests   []TestDecl
+}
+
+// ToolDecl is `tool Name(arg: Type, ...) -> Ret { description "..." }` — a
+// Go-backed function the model may call during a tool-using function's agent
+// loop. The compiler generates a typed args struct and a handler field; the
+// caller supplies the implementation.
+type ToolDecl struct {
+	Name        string
+	Params      []Param
+	Ret         TypeRef
+	Description string
+	Line        int
 }
 
 // UnionDecl is `union Name = A | B | C` — a closed set of variant types the
@@ -106,7 +119,11 @@ type FuncDecl struct {
 	Stream bool
 	Client string
 	Prompt string
-	Line   int
+	// Tools names the declared tools this function may call. When non-empty the
+	// generated function takes a typed handlers struct and runs the agent loop
+	// (promptr.RunTools) instead of a single Extract.
+	Tools []string
+	Line  int
 }
 
 // TestDecl is `test Name { function F args { k v ... } }` — an example

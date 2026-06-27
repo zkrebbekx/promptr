@@ -223,6 +223,50 @@ Providers map parts to their native content arrays (OpenAI `image_url`,
 Anthropic `image` blocks; inline bytes are base64 data-URLs, or pass a URL with
 `promptr.ImageURL`). See `examples/stream`.
 
+## Tool-calling & agents
+
+Declare `tool`s and hand them to a `function` with `tools [...]`. promptr runs
+the **bounded model → tool → model loop** for you and still returns a typed Go
+value at the end — single-shot extraction becomes a typed agent without giving
+up type safety:
+
+```promptr
+tool GetWeather(city: string) -> Weather {
+  description "Look up the current weather for a city."
+}
+tool SearchFlights(from: string, to: string) -> Flight[] {
+  description "Find available flights between two cities."
+}
+
+function PlanTrip(goal: string) -> Itinerary {
+  client Smart
+  tools [GetWeather, SearchFlights]
+  prompt #"Plan a trip for this goal. {{ ctx.output_schema }} Goal: {{ goal }}"#
+}
+```
+
+The generated function takes a **typed handlers struct** — one func per tool,
+its argument a generated `<Tool>Args` struct coerced from the model's JSON:
+
+```go
+itin, err := PlanTrip(ctx, provider, "see the northern lights", PlanTripTools{
+    GetWeather: func(ctx context.Context, a GetWeatherArgs) (Weather, error) {
+        return lookupWeather(a.City)
+    },
+    SearchFlights: func(ctx context.Context, a SearchFlightsArgs) ([]Flight, error) {
+        return searchFlights(a.From, a.To)
+    },
+})
+```
+
+The loop dispatches each requested tool, feeds the result back, and repeats up
+to `Options.MaxSteps` (default 8) until the model answers — coerced into
+`Itinerary`. Unknown-tool and handler-error turns are fed back as text so the
+model can recover rather than aborting. `promptr.RunTools[T]` is usable directly,
+too. Works on providers implementing the optional `ToolProvider` interface
+(`openai`, `anthropic`, `fake`); others return a clear "does not support tool
+calls" error. See `examples/agent`.
+
 ## Providers
 
 The core imports no LLM SDK. A `Provider` is one method:

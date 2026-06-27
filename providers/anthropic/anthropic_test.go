@@ -114,6 +114,80 @@ func TestStream(t *testing.T) {
 	})
 }
 
+func TestCompleteTools(t *testing.T) {
+	Convey("Given a stub Messages API returning a tool_use block", t, func() {
+		var gotReq reqBody
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &gotReq)
+			w.Header().Set("content-type", "application/json")
+			_, _ = io.WriteString(w, `{"content":[{"type":"tool_use","id":"tu_1","name":"GetWeather","input":{"city":"Oslo"}}]}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "claude-opus-4-8")
+		c.BaseURL = srv.URL
+
+		Convey("When CompleteTools is called with a tool definition", func() {
+			reply, err := c.CompleteTools(context.Background(),
+				[]promptr.Message{{Role: "user", Content: "weather?"}},
+				[]promptr.ToolDef{{Name: "GetWeather", Description: "look it up", Params: "city: string"}},
+			)
+			So(err, ShouldBeNil)
+
+			Convey("Then the request carried the tool with an object input_schema", func() {
+				So(gotReq.Tools, ShouldHaveLength, 1)
+				So(gotReq.Tools[0].Name, ShouldEqual, "GetWeather")
+				So(gotReq.Tools[0].InputSchema["type"], ShouldEqual, "object")
+			})
+
+			Convey("Then the tool_use block becomes a ToolCall with JSON arguments", func() {
+				So(reply.Calls, ShouldHaveLength, 1)
+				So(reply.Calls[0].ID, ShouldEqual, "tu_1")
+				So(reply.Calls[0].Name, ShouldEqual, "GetWeather")
+				So(reply.Calls[0].Arguments, ShouldContainSubstring, `"city":"Oslo"`)
+			})
+		})
+	})
+
+	Convey("Given a stub capturing a tool-call turn and its result", t, func() {
+		var raw map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &raw)
+			w.Header().Set("content-type", "application/json")
+			_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"done"}]}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "claude-opus-4-8")
+		c.BaseURL = srv.URL
+
+		Convey("When CompleteTools sends the assistant tool_use and the tool_result", func() {
+			reply, err := c.CompleteTools(context.Background(), []promptr.Message{
+				{Role: "user", Content: "go"},
+				{Role: "assistant", ToolCalls: []promptr.ToolCall{{ID: "tu_1", Name: "GetWeather", Arguments: `{"city":"Oslo"}`}}},
+				{Role: "tool", ToolCallID: "tu_1", Content: `{"high_c":3}`},
+			}, nil)
+			So(err, ShouldBeNil)
+			So(reply.Text, ShouldEqual, "done")
+
+			Convey("Then the assistant turn carries a tool_use block and the user turn a tool_result", func() {
+				msgs := raw["messages"].([]any)
+				So(msgs, ShouldHaveLength, 3)
+				assistant := msgs[1].(map[string]any)
+				So(assistant["role"], ShouldEqual, "assistant")
+				ablock := assistant["content"].([]any)[0].(map[string]any)
+				So(ablock["type"], ShouldEqual, "tool_use")
+				So(ablock["id"], ShouldEqual, "tu_1")
+				result := msgs[2].(map[string]any)
+				So(result["role"], ShouldEqual, "user")
+				rblock := result["content"].([]any)[0].(map[string]any)
+				So(rblock["type"], ShouldEqual, "tool_result")
+				So(rblock["tool_use_id"], ShouldEqual, "tu_1")
+			})
+		})
+	})
+}
+
 func TestMultimodalContent(t *testing.T) {
 	Convey("Given a stub capturing the raw request body", t, func() {
 		var raw map[string]any

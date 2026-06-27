@@ -67,4 +67,36 @@ test T { function Greet args { name "Zac" wrong "x" } }`)
 			So(diagMsgs(f), ShouldContain, `duplicate declaration "Dup"`)
 		})
 	})
+
+	Convey("Given a well-formed tool-using function", t, func() {
+		f, err := Parse(`
+class W { city string }
+client C { provider "fake" model "x" }
+tool GetW(city: string) -> W { description "look up" }
+function Plan(goal: string) -> string {
+  client C
+  tools [GetW]
+  prompt #"{{ goal }}"#
+}`)
+		So(err, ShouldBeNil)
+		Convey("Then Validate reports no diagnostics", func() {
+			So(Validate(f), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a function referencing an unknown tool and a tool with a bad type", t, func() {
+		f, _ := Parse(`
+client C { provider "fake" model "x" }
+tool Bad(x: Ghost) -> string { description "d" }
+function F(g: string) -> string {
+  client C
+  tools [Missing]
+  prompt #"{{ g }}"#
+}`)
+		msgs := diagMsgs(f)
+		Convey("Then the unknown tool and unresolved tool type are flagged", func() {
+			So(msgs, ShouldContain, `function "F" uses unknown tool "Missing"`)
+			So(msgs, ShouldContain, `tool Bad refers to unknown type "Ghost"`)
+		})
+	})
 }

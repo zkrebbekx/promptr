@@ -47,28 +47,89 @@ func New(apiKey, model string) *Client {
 }
 
 type reqBody struct {
-	Model    string   `json:"model"`
-	Messages []apiMsg `json:"messages"`
-	Stream   bool     `json:"stream,omitempty"`
+	Model    string    `json:"model"`
+	Messages []apiMsg  `json:"messages"`
+	Stream   bool      `json:"stream,omitempty"`
+	Tools    []apiTool `json:"tools,omitempty"`
 }
 
 // apiMsg.Content is `any` because the Chat Completions API accepts either a
-// plain string (text-only) or an array of typed content parts (multimodal).
+// plain string (text-only) or an array of typed content parts (multimodal). For
+// tool turns it also carries tool_calls (assistant) or tool_call_id (tool role).
 type apiMsg struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
+	Role       string        `json:"role"`
+	Content    any           `json:"content"`
+	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
-// buildMessages maps promptr messages to the API shape, emitting a content
-// array only when a message carries multimodal Parts.
+// apiTool is one entry in the request's `tools` array (a callable function).
+type apiTool struct {
+	Type     string          `json:"type"` // always "function"
+	Function apiToolFunction `json:"function"`
+}
+
+type apiToolFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// apiToolCall is a function call the model requested (response) or that we echo
+// back (request) on the assistant turn.
+type apiToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"` // "function"
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// buildMessages maps promptr messages to the API shape: a content array for
+// multimodal Parts, tool_calls for an assistant tool-call turn, or tool_call_id
+// for a tool result; otherwise a plain string content.
 func buildMessages(messages []promptr.Message) []apiMsg {
 	out := make([]apiMsg, 0, len(messages))
 	for _, m := range messages {
-		if len(m.Parts) == 0 {
+		switch {
+		case len(m.ToolCalls) > 0:
+			out = append(out, apiMsg{Role: m.Role, ToolCalls: toAPIToolCalls(m.ToolCalls)})
+		case m.ToolCallID != "":
+			out = append(out, apiMsg{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID})
+		case len(m.Parts) == 0:
 			out = append(out, apiMsg{Role: m.Role, Content: m.Content})
-			continue
+		default:
+			out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
 		}
-		out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
+	}
+	return out
+}
+
+// toAPITools maps promptr tool definitions to the request's tools array. The
+// parameter schema is passed as a permissive object schema carrying our
+// human-readable description; the tolerant coerce kernel parses whatever
+// arguments the model returns.
+func toAPITools(defs []promptr.ToolDef) []apiTool {
+	out := make([]apiTool, len(defs))
+	for i, d := range defs {
+		fn := apiToolFunction{
+			Name:        d.Name,
+			Description: d.Description,
+			Parameters:  map[string]any{"type": "object", "description": d.Params},
+		}
+		out[i] = apiTool{Type: "function", Function: fn}
+	}
+	return out
+}
+
+func toAPIToolCalls(calls []promptr.ToolCall) []apiToolCall {
+	out := make([]apiToolCall, len(calls))
+	for i, c := range calls {
+		tc := apiToolCall{ID: c.ID, Type: "function"}
+		tc.Function.Name = c.Name
+		tc.Function.Arguments = c.Arguments
+		out[i] = tc
 	}
 	return out
 }
@@ -104,7 +165,8 @@ func imageURL(p promptr.Part) string {
 type respBody struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string        `json:"content"`
+			ToolCalls []apiToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
@@ -156,6 +218,60 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 		return "", fmt.Errorf("openai: response had no choices")
 	}
 	return out.Choices[0].Message.Content, nil
+}
+
+// CompleteTools sends the conversation plus the available tools and returns
+// either the model's final text or the tool calls it wants run. It implements
+// promptr.ToolProvider; the agent loop in the runtime drives the dispatch.
+func (c *Client) CompleteTools(ctx context.Context, messages []promptr.Message, tools []promptr.ToolDef) (promptr.Reply, error) {
+	if c.APIKey == "" {
+		return promptr.Reply{}, fmt.Errorf("openai: empty API key")
+	}
+	body := reqBody{Model: c.Model, Messages: buildMessages(messages), Tools: toAPITools(tools)}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+c.APIKey)
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+
+	var out respBody
+	if jerr := json.Unmarshal(raw, &out); jerr != nil {
+		return promptr.Reply{}, fmt.Errorf("openai: decode response (%s): %w", resp.Status, jerr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if out.Error != nil {
+			return promptr.Reply{}, fmt.Errorf("openai: %s: %s", resp.Status, out.Error.Message)
+		}
+		return promptr.Reply{}, fmt.Errorf("openai: %s", resp.Status)
+	}
+	if len(out.Choices) == 0 {
+		return promptr.Reply{}, fmt.Errorf("openai: response had no choices")
+	}
+
+	msg := out.Choices[0].Message
+	if len(msg.ToolCalls) > 0 {
+		calls := make([]promptr.ToolCall, len(msg.ToolCalls))
+		for i, tc := range msg.ToolCalls {
+			calls[i] = promptr.ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments}
+		}
+		return promptr.Reply{Calls: calls}, nil
+	}
+	return promptr.Reply{Text: msg.Content}, nil
 }
 
 // streamChunk is one server-sent delta in a streaming completion.
@@ -251,8 +367,9 @@ func trimSlash(s string) string {
 	return s
 }
 
-// static assertions: Client satisfies both runtime contracts.
+// static assertions: Client satisfies all three runtime contracts.
 var (
 	_ promptr.Provider       = (*Client)(nil)
 	_ promptr.StreamProvider = (*Client)(nil)
+	_ promptr.ToolProvider   = (*Client)(nil)
 )

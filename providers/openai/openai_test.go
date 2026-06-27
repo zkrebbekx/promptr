@@ -114,6 +114,77 @@ func TestBuildMessagesMultimodal(t *testing.T) {
 	})
 }
 
+func TestCompleteTools(t *testing.T) {
+	Convey("Given a stub API that returns a tool call", t, func() {
+		var gotReq reqBody
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &gotReq)
+			w.Header().Set("content-type", "application/json")
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"GetWeather","arguments":"{\"city\":\"Oslo\"}"}}]}}]}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "gpt-4o")
+		c.BaseURL = srv.URL
+
+		Convey("When CompleteTools is called with a tool definition", func() {
+			reply, err := c.CompleteTools(context.Background(),
+				[]promptr.Message{{Role: "user", Content: "weather in Oslo?"}},
+				[]promptr.ToolDef{{Name: "GetWeather", Description: "look it up", Params: "city: string"}},
+			)
+			So(err, ShouldBeNil)
+
+			Convey("Then the request carried the function tool definition", func() {
+				So(gotReq.Tools, ShouldHaveLength, 1)
+				So(gotReq.Tools[0].Type, ShouldEqual, "function")
+				So(gotReq.Tools[0].Function.Name, ShouldEqual, "GetWeather")
+				So(gotReq.Tools[0].Function.Parameters["type"], ShouldEqual, "object")
+			})
+
+			Convey("Then the reply parses the requested tool call", func() {
+				So(reply.Text, ShouldEqual, "")
+				So(reply.Calls, ShouldHaveLength, 1)
+				So(reply.Calls[0].ID, ShouldEqual, "call_1")
+				So(reply.Calls[0].Name, ShouldEqual, "GetWeather")
+				So(reply.Calls[0].Arguments, ShouldEqual, `{"city":"Oslo"}`)
+			})
+		})
+	})
+
+	Convey("Given a stub API and a prior tool-call turn plus result", t, func() {
+		var raw map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &raw)
+			w.Header().Set("content-type", "application/json")
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"done"}}]}`)
+		}))
+		defer srv.Close()
+		c := New("sk-test", "gpt-4o")
+		c.BaseURL = srv.URL
+
+		Convey("When CompleteTools sends the assistant call and the tool result", func() {
+			reply, err := c.CompleteTools(context.Background(), []promptr.Message{
+				{Role: "user", Content: "go"},
+				{Role: "assistant", ToolCalls: []promptr.ToolCall{{ID: "call_1", Name: "GetWeather", Arguments: `{"city":"Oslo"}`}}},
+				{Role: "tool", ToolCallID: "call_1", Content: `{"high_c":3}`},
+			}, nil)
+			So(err, ShouldBeNil)
+			So(reply.Text, ShouldEqual, "done")
+
+			Convey("Then the wire messages carry tool_calls and tool_call_id", func() {
+				msgs := raw["messages"].([]any)
+				So(msgs, ShouldHaveLength, 3)
+				assistant := msgs[1].(map[string]any)
+				So(assistant["tool_calls"], ShouldNotBeNil)
+				toolMsg := msgs[2].(map[string]any)
+				So(toolMsg["tool_call_id"], ShouldEqual, "call_1")
+				So(toolMsg["role"], ShouldEqual, "tool")
+			})
+		})
+	})
+}
+
 func TestStream(t *testing.T) {
 	Convey("Given a server emitting SSE deltas", t, func() {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

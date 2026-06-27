@@ -82,6 +82,8 @@ func (p *parser) parseFile() *File {
 			f.Unions = append(f.Unions, p.parseUnion())
 		case "client":
 			f.Clients = append(f.Clients, p.parseClient())
+		case "tool":
+			f.Tools = append(f.Tools, p.parseTool())
 		case "function":
 			f.Funcs = append(f.Funcs, p.parseFunc())
 		case "test":
@@ -307,6 +309,8 @@ func (p *parser) parseFunc() FuncDecl {
 		switch key.text {
 		case "client":
 			d.Client = p.expect(tIdent, "client name").text
+		case "tools":
+			d.Tools = p.parseIdentList()
 		case "prompt":
 			t := p.cur()
 			if t.kind == tRawString || t.kind == tString {
@@ -317,6 +321,51 @@ func (p *parser) parseFunc() FuncDecl {
 			}
 		default:
 			p.errf(key, "unknown function body key %q", key.text)
+		}
+	}
+	p.expect(tRBrace, "'}'")
+	return d
+}
+
+// parseTool reads `tool Name(params) -> Ret { description "..." }`. It mirrors
+// parseFunc's signature parsing; the body carries only a description.
+func (p *parser) parseTool() ToolDecl {
+	kw := p.advance() // tool
+	name := p.expect(tIdent, "tool name")
+	d := ToolDecl{Name: name.text, Line: kw.line}
+	p.expect(tLParen, "'('")
+	for p.cur().kind != tRParen && p.cur().kind != tEOF {
+		pn := p.expect(tIdent, "parameter name")
+		p.expect(tColon, "':'")
+		pt := p.parseTypeRef()
+		d.Params = append(d.Params, Param{Name: pn.text, Type: pt})
+		if !p.accept(tComma) {
+			break
+		}
+	}
+	p.expect(tRParen, "')'")
+	p.expect(tArrow, "'->'")
+	d.Ret = p.parseTypeRef()
+	p.expect(tLBrace, "'{'")
+	for p.cur().kind != tRBrace && p.cur().kind != tEOF {
+		key := p.cur()
+		if key.kind != tIdent {
+			p.errf(key, "expected 'description', got %q", key.text)
+			p.advance()
+			continue
+		}
+		p.advance()
+		switch key.text {
+		case "description":
+			t := p.cur()
+			if t.kind == tRawString || t.kind == tString {
+				d.Description = t.text
+				p.advance()
+			} else {
+				p.errf(t, "expected description string")
+			}
+		default:
+			p.errf(key, "unknown tool body key %q", key.text)
 		}
 	}
 	p.expect(tRBrace, "'}'")

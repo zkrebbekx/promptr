@@ -28,6 +28,38 @@ func (failing) Complete(context.Context, []promptr.Message) (string, error) {
 	return "", errors.New("boom")
 }
 
+// scriptedTool is a ToolProvider that returns a final-text reply, for exercising
+// CollectTools observability.
+type scriptedTool struct{ text string }
+
+func (s scriptedTool) Complete(context.Context, []promptr.Message) (string, error) {
+	return s.text, nil
+}
+func (s scriptedTool) CompleteTools(context.Context, []promptr.Message, []promptr.ToolDef) (promptr.Reply, error) {
+	return promptr.Reply{Text: s.text}, nil
+}
+
+func TestCollectTools(t *testing.T) {
+	Convey("Given a Collector wrapping a tool provider", t, func() {
+		col := &promptr.Collector{}
+		tp := col.CollectTools(scriptedTool{text: `{"total": 5}`})
+
+		Convey("When RunTools drives it to a final answer", func() {
+			got, err := promptr.RunTools[struct {
+				Total int `json:"total"`
+			}](context.Background(), tp, "go", nil, promptr.Options{})
+			So(err, ShouldBeNil)
+			So(got.Total, ShouldEqual, 5)
+
+			Convey("Then the CompleteTools call was recorded", func() {
+				s := col.Stats()
+				So(s.Calls, ShouldEqual, 1)
+				So(s.ReplyTokens, ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
 func TestCollector(t *testing.T) {
 	Convey("Given a Collector wrapping a non-reporting provider", t, func() {
 		col := &promptr.Collector{}

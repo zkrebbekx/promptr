@@ -266,3 +266,41 @@ class Profile {
 		})
 	})
 }
+
+func TestParseTools(t *testing.T) {
+	Convey("Given tool declarations and a function that uses them", t, func() {
+		f, err := Parse(`
+class Weather { city string }
+tool GetWeather(city: string) -> Weather {
+  description "Look up the weather."
+}
+tool SearchFlights(from: string, to: string) -> Flight[] {
+  description "Find flights."
+}
+function PlanTrip(goal: string) -> Itinerary {
+  client C
+  tools [GetWeather, SearchFlights]
+  prompt #"{{ goal }}"#
+}`)
+		So(err, ShouldBeNil)
+
+		Convey("Then both tools are parsed with params, return and description", func() {
+			So(f.Tools, ShouldHaveLength, 2)
+			gw := f.Tools[0]
+			So(gw.Name, ShouldEqual, "GetWeather")
+			So(gw.Params, ShouldHaveLength, 1)
+			So(gw.Params[0].Name, ShouldEqual, "city")
+			So(gw.Ret.Name, ShouldEqual, "Weather")
+			So(gw.Description, ShouldEqual, "Look up the weather.")
+
+			sf := f.Tools[1]
+			So(sf.Params, ShouldHaveLength, 2)
+			So(sf.Ret.List, ShouldBeTrue)
+			So(sf.Ret.Name, ShouldEqual, "Flight")
+		})
+
+		Convey("Then the function records its tool references", func() {
+			So(f.Funcs[0].Tools, ShouldResemble, []string{"GetWeather", "SearchFlights"})
+		})
+	})
+}

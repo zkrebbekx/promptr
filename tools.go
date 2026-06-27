@@ -1,0 +1,140 @@
+package promptr
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/zkrebbekx/promptr/coerce"
+)
+
+// ToolDef describes a tool offered to the model: its name, a one-line
+// description, and a human-readable schema of its argument object (built the
+// same way output schemas are, so the model sees one consistent style). A
+// ToolProvider marshals these into whatever its backend's tool/function-calling
+// API expects.
+type ToolDef struct {
+	Name        string
+	Description string
+	Params      string // schema description of the JSON argument object
+}
+
+// ToolCall is the model's request to invoke a tool: an opaque ID the provider
+// uses to correlate the result, the tool Name, and the raw JSON Arguments. The
+// agent loop decodes Arguments tolerantly via the coerce kernel.
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+// Reply is one turn from a ToolProvider: either a final answer in Text, or one
+// or more tool Calls the model wants run before it can answer. When Calls is
+// non-empty the loop dispatches them and asks again; otherwise Text is final.
+type Reply struct {
+	Text  string
+	Calls []ToolCall
+}
+
+// ToolProvider is an optional capability a Provider may implement to support
+// tool/function-calling. CompleteTools sends the conversation along with the
+// available tool definitions and returns either the model's final text or the
+// tool calls it wants executed. A Provider that does not implement this cannot
+// run tool functions — RunTools returns a clear error.
+type ToolProvider interface {
+	CompleteTools(ctx context.Context, messages []Message, tools []ToolDef) (Reply, error)
+}
+
+// Tool binds a ToolDef to its Go implementation. Invoke receives the model's raw
+// JSON arguments and returns the result as JSON to feed back into the
+// conversation. Generated code builds these by wrapping a typed handler (decode
+// args → call handler → marshal result); you can also construct them by hand.
+type Tool struct {
+	Def    ToolDef
+	Invoke func(ctx context.Context, argsJSON string) (resultJSON string, err error)
+}
+
+// RunTools runs prompt against a tool-capable provider, executing the Go tools
+// the model asks for and feeding their results back, until the model returns a
+// final answer that coerces into T. The loop is bounded by Options.MaxSteps
+// (default 8).
+//
+// An unknown tool name or a handler error is fed back to the model as a tool
+// result so it can recover, rather than aborting the run. If the model's final
+// answer will not coerce into T, the parse error is fed back for one repair
+// re-ask (within the step budget), mirroring Extract.
+//
+// This is what a generated tool-using function calls. The provider must
+// implement ToolProvider; otherwise RunTools returns an error.
+func RunTools[T any](ctx context.Context, p Provider, prompt string, tools []Tool, opts Options) (T, error) {
+	var zero T
+	tp, ok := p.(ToolProvider)
+	if !ok {
+		return zero, fmt.Errorf("promptr: provider %T does not support tool calls", p)
+	}
+
+	defs := make([]ToolDef, len(tools))
+	byName := make(map[string]Tool, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Def
+		byName[t.Def.Name] = t
+	}
+
+	msgs := make([]Message, 0, 8)
+	if opts.System != "" {
+		msgs = append(msgs, Message{Role: "system", Content: opts.System})
+	}
+	msgs = append(msgs, opts.userMessage(prompt))
+
+	steps := opts.maxSteps()
+	var lastErr error
+	for step := 0; step < steps; step++ {
+		reply, err := tp.CompleteTools(ctx, msgs, defs)
+		if err != nil {
+			return zero, err
+		}
+
+		if len(reply.Calls) == 0 {
+			v, perr := coerce.Into[T](reply.Text)
+			if perr == nil {
+				return v, nil
+			}
+			lastErr = perr
+			msgs = append(msgs,
+				Message{Role: "assistant", Content: reply.Text},
+				Message{Role: "user", Content: "That reply could not be parsed (" + perr.Error() + "). Reply again with only the valid value, no commentary."},
+			)
+			continue
+		}
+
+		// Echo the assistant's tool-call turn, then append each tool's result so
+		// the model can use it on the next turn.
+		msgs = append(msgs, Message{Role: "assistant", ToolCalls: reply.Calls})
+		for _, call := range reply.Calls {
+			msgs = append(msgs, Message{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Content:    dispatch(ctx, byName, call),
+			})
+		}
+	}
+
+	if lastErr != nil {
+		return zero, lastErr
+	}
+	return zero, fmt.Errorf("promptr: tool loop did not converge within %d steps", steps)
+}
+
+// dispatch runs one tool call, returning the result JSON, or an error message as
+// a string that is fed back to the model so it can recover (an unknown tool or a
+// handler failure does not abort the whole run).
+func dispatch(ctx context.Context, byName map[string]Tool, call ToolCall) string {
+	t, ok := byName[call.Name]
+	if !ok {
+		return fmt.Sprintf("error: unknown tool %q", call.Name)
+	}
+	out, err := t.Invoke(ctx, call.Arguments)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return out
+}
