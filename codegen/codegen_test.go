@@ -143,3 +143,77 @@ client Reliable {
 		})
 	})
 }
+
+func TestGenerateUnions(t *testing.T) {
+	Convey("Given named + inline unions over classes", t, func() {
+		code := generate(t, `
+class Search { query string }
+class Escalate { reason string }
+union Action = Search | Escalate
+function Route(msg: string) -> Action {
+  client C
+  prompt #"Route it. {{ ctx.output_schema }} msg: {{ msg }}"#
+}`)
+
+		Convey("Then a sealed interface + variant markers are emitted", func() {
+			So(code, ShouldContainSubstring, "type Action interface{ isAction() }")
+			So(code, ShouldContainSubstring, "func (Search) isAction()")
+			So(code, ShouldContainSubstring, "func (Escalate) isAction()")
+		})
+
+		Convey("Then the function returns the interface via ExtractUnion", func() {
+			So(code, ShouldContainSubstring, "func Route(ctx context.Context, p promptr.Provider, msg string) (Action, error)")
+			So(code, ShouldContainSubstring, "promptr.ExtractUnion[Action](ctx, p, prompt, promptr.Options{Attempts: 2}, promptr.NewUnion(Search{}, Escalate{}))")
+		})
+
+		Convey("Then the baked schema shows the model the ONE-of choice", func() {
+			So(code, ShouldContainSubstring, "matching exactly ONE of these shapes")
+		})
+
+		Convey("Then the output is valid Go", func() {
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
+		})
+	})
+}
+
+func TestGenerateInlineUnionReturn(t *testing.T) {
+	Convey("Given an inline union return type", t, func() {
+		code := generate(t, `
+class Reply { text string }
+class Handoff { team string }
+function Triage(q: string) -> Reply | Handoff {
+  client C
+  prompt #"{{ q }} {{ ctx.output_schema }}"#
+}`)
+
+		Convey("Then a synthesized <Func>Result interface is used", func() {
+			So(code, ShouldContainSubstring, "type TriageResult interface{ isTriageResult() }")
+			So(code, ShouldContainSubstring, "(TriageResult, error)")
+			So(code, ShouldContainSubstring, "promptr.NewUnion(Reply{}, Handoff{})")
+		})
+	})
+}
+
+func TestGenerateMapAndAttrs(t *testing.T) {
+	Convey("Given a map field and @description/@alias attributes", t, func() {
+		code := generate(t, `
+class Profile {
+  scores map<string, int>
+  name   string @description("full legal name") @alias("full_name")
+}`)
+
+		Convey("Then the map becomes a Go map type", func() {
+			So(code, ShouldContainSubstring, "map[string]int")
+		})
+
+		Convey("Then @alias drives the json tag", func() {
+			So(code, ShouldContainSubstring, "`json:\"full_name\"`")
+		})
+
+		Convey("Then it is valid Go", func() {
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
+		})
+	})
+}

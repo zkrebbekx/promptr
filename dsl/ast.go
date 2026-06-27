@@ -10,9 +10,19 @@ package dsl
 type File struct {
 	Enums   []EnumDecl
 	Classes []ClassDecl
+	Unions  []UnionDecl
 	Clients []ClientDecl
 	Funcs   []FuncDecl
 	Tests   []TestDecl
+}
+
+// UnionDecl is `union Name = A | B | C` — a closed set of variant types the
+// model output is classified into (compiles to a sealed interface + a
+// coerce.Union resolver, mirroring sumx's sealed sum types).
+type UnionDecl struct {
+	Name     string
+	Variants []string
+	Line     int
 }
 
 // EnumDecl is `enum Name { A B C }` — a closed set of string members.
@@ -29,22 +39,32 @@ type ClassDecl struct {
 	Line   int
 }
 
-// FieldDecl is one `name Type` line inside a class.
+// FieldDecl is one `name Type` line inside a class. A field may carry
+// @description / @alias attributes that tune the baked schema (and, for @alias,
+// the json name the coerce kernel binds the model's output to).
 type FieldDecl struct {
-	Name string
-	Type TypeRef
+	Name  string
+	Type  TypeRef
+	Desc  string // @description("...") — human guidance shown to the model
+	Alias string // @alias("...") — alternate wire/prompt name for this field
 }
 
 // TypeRef names a field/return/param type: a primitive (string, int, float,
-// bool) or a declared class/enum, optionally a list and/or optional.
+// bool) or a declared class/enum, optionally a list and/or optional. It can
+// also be a map (map<string, V>) or an inline union (A | B).
 //
-//	string      -> {Name:"string"}
-//	string[]    -> {Name:"string", List:true}
-//	Severity?   -> {Name:"Severity", Optional:true}
+//	string         -> {Name:"string"}
+//	string[]       -> {Name:"string", List:true}
+//	Severity?      -> {Name:"Severity", Optional:true}
+//	map<string,int>-> {Map:true, Elem:&{Name:"int"}}
+//	Search|Escalate-> {Union:["Search","Escalate"]}
 type TypeRef struct {
 	Name     string
 	List     bool
 	Optional bool
+	Map      bool     // map<string, Elem>; key is always string
+	Elem     *TypeRef // map value type when Map is true
+	Union    []string // inline union variant names (Name is empty when set)
 }
 
 // ClientDecl is `client Name { provider "x" model "y" ... }` — a named binding
