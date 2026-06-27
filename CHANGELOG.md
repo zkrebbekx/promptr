@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/zkrebbekx/promptr/compare/v0.3.0...v0.4.0) (2026-06-27)
+
+
+### Features
+
+* **v0.4:** token streaming and multimodal inputs ([#7](https://github.com/zkrebbekx/promptr/issues/7)) ([661abb1](https://github.com/zkrebbekx/promptr/commit/661abb163d1fd6eb733e4606b308124ab8091f5b))
+
 ## [0.3.0](https://github.com/zkrebbekx/promptr/compare/v0.2.0...v0.3.0) (2026-06-27)
 
 
