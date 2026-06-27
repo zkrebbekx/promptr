@@ -32,7 +32,7 @@ func ClientDefault(reg promptr.Registry) promptr.Provider {
 	return reg.Get("Default")
 }
 
-func ExtractTicket(ctx context.Context, p promptr.Provider, text string) (Ticket, error) {
+func ExtractTicket(ctx context.Context, p promptr.Provider, text string, opt ...promptr.Option) (Ticket, error) {
 	prompt, err := promptr.Render(`
     Extract a support ticket from the user's message.
     {{ ctx.output_schema }}
@@ -51,5 +51,9 @@ func ExtractTicket(ctx context.Context, p promptr.Provider, text string) (Ticket
 		var zero Ticket
 		return zero, err
 	}
-	return promptr.Extract[Ticket](ctx, p, prompt, promptr.Options{Attempts: 2})
+	options := promptr.Options{Attempts: 2}
+	for _, o := range opt {
+		o(&options)
+	}
+	return promptr.Extract[Ticket](ctx, p, prompt, options)
 }

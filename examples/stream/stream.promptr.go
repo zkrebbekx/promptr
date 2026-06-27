@@ -17,7 +17,7 @@ func ClientDefault(reg promptr.Registry) promptr.Provider {
 	return reg.Get("Default")
 }
 
-func SummarizeArticle(ctx context.Context, p promptr.Provider, article string) (<-chan promptr.Partial[Summary], error) {
+func SummarizeArticle(ctx context.Context, p promptr.Provider, article string, opt ...promptr.Option) (<-chan promptr.Partial[Summary], error) {
 	prompt, err := promptr.Render(`
     Summarize the article as a headline plus bullet points.
     {{ ctx.output_schema }}
@@ -34,10 +34,14 @@ func SummarizeArticle(ctx context.Context, p promptr.Provider, article string) (
 		var zero <-chan promptr.Partial[Summary]
 		return zero, err
 	}
-	return promptr.ExtractStream[Summary](ctx, p, prompt, promptr.Options{Attempts: 2})
+	options := promptr.Options{Attempts: 2}
+	for _, o := range opt {
+		o(&options)
+	}
+	return promptr.ExtractStream[Summary](ctx, p, prompt, options)
 }
 
-func CaptionImage(ctx context.Context, p promptr.Provider, photo promptr.Part, hint string) (Summary, error) {
+func CaptionImage(ctx context.Context, p promptr.Provider, photo promptr.Part, hint string, opt ...promptr.Option) (Summary, error) {
 	prompt, err := promptr.Render(`
     Caption the attached image.
     {{ ctx.output_schema }}
@@ -54,5 +58,9 @@ func CaptionImage(ctx context.Context, p promptr.Provider, photo promptr.Part, h
 		var zero Summary
 		return zero, err
 	}
-	return promptr.Extract[Summary](ctx, p, prompt, promptr.Options{Attempts: 2, UserParts: []promptr.Part{photo}})
+	options := promptr.Options{Attempts: 2, UserParts: []promptr.Part{photo}}
+	for _, o := range opt {
+		o(&options)
+	}
+	return promptr.Extract[Summary](ctx, p, prompt, options)
 }

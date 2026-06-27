@@ -1,0 +1,27 @@
+// Demonstrates field validation: @assert rules are hard — a violation is fed
+// back to the model as a repair re-ask (like a parse failure) — while @check
+// rules are soft, surfaced to an OnCheck sink while the value is still returned.
+// Both compile down to valx tags the runtime evaluates after coercion.
+enum Plan { FREE PRO ENTERPRISE }
+
+class Account {
+  email    string @assert("required")
+  username string @assert("min=3,max=20")
+  age      int    @assert("gt=0,lt=130") @check("min=18")
+  plan     Plan
+  seats    int    @check("min=1,max=100")
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ExtractAccount(text: string) -> Account {
+  client Default
+  prompt #"
+    Extract an account from the user's message.
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  "#
+}

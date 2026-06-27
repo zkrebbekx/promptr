@@ -67,7 +67,7 @@ func TestGenerate(t *testing.T) {
 		})
 
 		Convey("Then the function has the runtime signature and calls Extract", func() {
-			So(code, ShouldContainSubstring, "func ExtractTicket(ctx context.Context, p promptr.Provider, text string) (Ticket, error)")
+			So(code, ShouldContainSubstring, "func ExtractTicket(ctx context.Context, p promptr.Provider, text string, opt ...promptr.Option) (Ticket, error)")
 			So(code, ShouldContainSubstring, "promptr.Extract[Ticket](ctx, p, prompt,")
 		})
 
@@ -162,8 +162,8 @@ function Route(msg: string) -> Action {
 		})
 
 		Convey("Then the function returns the interface via ExtractUnion", func() {
-			So(code, ShouldContainSubstring, "func Route(ctx context.Context, p promptr.Provider, msg string) (Action, error)")
-			So(code, ShouldContainSubstring, "promptr.ExtractUnion[Action](ctx, p, prompt, promptr.Options{Attempts: 2}, promptr.NewUnion(Search{}, Escalate{}))")
+			So(code, ShouldContainSubstring, "func Route(ctx context.Context, p promptr.Provider, msg string, opt ...promptr.Option) (Action, error)")
+			So(code, ShouldContainSubstring, "promptr.ExtractUnion[Action](ctx, p, prompt, options, promptr.NewUnion(Search{}, Escalate{}))")
 		})
 
 		Convey("Then the baked schema shows the model the ONE-of choice", func() {

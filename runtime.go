@@ -52,6 +52,45 @@ type Options struct {
 	// model⇄tool round-trips RunTools will take before giving up. Ignored by the
 	// non-tool Extract paths.
 	MaxSteps int
+	// Validate, when set, runs after a reply coerces into T. A non-nil error is
+	// treated like a parse failure: its message is shown to the model and the call
+	// retried, so a generated @assert constraint drives the model to self-correct.
+	// It receives the value boxed as any (a struct or pointer to one).
+	Validate func(v any) error
+	// Check, when set, runs after Validate passes. Its violations are advisory:
+	// the value is still returned and any error is handed to OnCheck. This backs
+	// soft @check constraints. Check only runs when OnCheck is also set.
+	Check func(v any) error
+	// OnCheck receives the non-fatal result of Check. A nil OnCheck disables the
+	// Check pass entirely.
+	OnCheck func(err error)
+}
+
+// Option tunes the Options a generated function uses, applied after its built-in
+// defaults. Generated functions take a trailing `...Option`, so callers can set
+// retry budgets, a system preamble or a soft-check sink without the signature
+// changing. The zero set leaves the defaults untouched.
+type Option func(*Options)
+
+// WithAttempts caps the number of model calls (the first try plus repair re-asks).
+func WithAttempts(n int) Option { return func(o *Options) { o.Attempts = n } }
+
+// WithMaxSteps bounds the tool-calling agent loop's model⇄tool round-trips.
+func WithMaxSteps(n int) Option { return func(o *Options) { o.MaxSteps = n } }
+
+// WithSystem prepends a system message to the exchange.
+func WithSystem(s string) Option { return func(o *Options) { o.System = s } }
+
+// OnCheck installs a sink for soft @check violations. Without it, generated
+// @check constraints are evaluated into a no-op and effectively skipped; with it,
+// each non-fatal violation is delivered here while the value is still returned.
+func OnCheck(fn func(err error)) Option { return func(o *Options) { o.OnCheck = fn } }
+
+// apply runs each Option against o.
+func (o *Options) apply(opts []Option) {
+	for _, opt := range opts {
+		opt(o)
+	}
 }
 
 // userMessage builds the user turn for prompt, attaching any multimodal parts.
@@ -98,15 +137,39 @@ func Extract[T any](ctx context.Context, p Provider, prompt string, opts Options
 		if err != nil {
 			return zero, err
 		}
-		v, perr := coerce.Into[T](raw)
-		if perr == nil {
+		v, repair, ferr := finalize[T](raw, opts)
+		if ferr == nil {
 			return v, nil
 		}
-		lastErr = perr
+		lastErr = ferr
 		msgs = append(msgs,
 			Message{Role: "assistant", Content: raw},
-			Message{Role: "user", Content: "That reply could not be parsed (" + perr.Error() + "). Reply again with only the valid value, no commentary."},
+			Message{Role: "user", Content: repair},
 		)
 	}
 	return zero, lastErr
+}
+
+// finalize coerces raw into T and applies any Validate/Check from opts. On
+// success it returns the value and a nil error. On a parse failure or a failed
+// @assert (Validate) it returns a repair message — to feed back to the model for
+// another attempt — alongside the underlying error. The advisory Check pass runs
+// only after Validate succeeds and only when OnCheck is set; its violations are
+// reported to OnCheck and never block the value.
+func finalize[T any](raw string, opts Options) (v T, repair string, err error) {
+	v, perr := coerce.Into[T](raw)
+	if perr != nil {
+		return v, "That reply could not be parsed (" + perr.Error() + "). Reply again with only the valid value, no commentary.", perr
+	}
+	if opts.Validate != nil {
+		if verr := opts.Validate(v); verr != nil {
+			return v, "That reply did not satisfy the required constraints (" + verr.Error() + "). Reply again with only a valid value, no commentary.", verr
+		}
+	}
+	if opts.Check != nil && opts.OnCheck != nil {
+		if cerr := opts.Check(v); cerr != nil {
+			opts.OnCheck(cerr)
+		}
+	}
+	return v, "", nil
 }
