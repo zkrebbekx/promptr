@@ -300,7 +300,14 @@ to `Options.MaxSteps` (default 8) until the model answers — coerced into
 model can recover rather than aborting. `promptr.RunTools[T]` is usable directly,
 too. When the model requests several tools in one turn, pass
 `promptr.ParallelTools()` to dispatch them concurrently (results still feed back
-in request order; opt in only when your handlers are goroutine-safe). Works on providers implementing the optional `ToolProvider` interface —
+in request order; opt in only when your handlers are goroutine-safe).
+
+`promptr.RunToolsStream[T]` drives the same agent loop but streams the model's
+answer: it returns a `<-chan Partial[T]`, emitting a progressively coerced value
+as the final turn's tokens arrive and a `Complete` partial once it parses. A
+provider implementing `StreamToolProvider` (openai, anthropic, and the `fake`)
+streams token-by-token; one that only implements `ToolProvider` (gemini, ollama)
+falls back transparently to a single final `Partial`. Works on providers implementing the optional `ToolProvider` interface —
 `openai`, `anthropic`, `gemini` (native `functionDeclarations`), `ollama`
 (native `/api/chat` tools), and `fake`; others return a clear "does not support
 tool calls" error. See `examples/agent`.
