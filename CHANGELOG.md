@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/zkrebbekx/promptr/compare/v0.5.0...v0.6.0) (2026-06-27)
+
+
+### Features
+
+* v0.6 tool-calling & bounded agent loop ([#11](https://github.com/zkrebbekx/promptr/issues/11)) ([35f20af](https://github.com/zkrebbekx/promptr/commit/35f20af1248e9e86821a7b464705e9be403aae6b))
+
 ## [0.5.0](https://github.com/zkrebbekx/promptr/compare/v0.4.0...v0.5.0) (2026-06-27)
 
 
