@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/zkrebbekx/promptr/compare/v0.10.0...v0.11.0) (2026-06-27)
+
+
+### Features
+
+* streaming tool calls (RunToolsStream + StreamToolProvider) ([#21](https://github.com/zkrebbekx/promptr/issues/21)) ([f898b36](https://github.com/zkrebbekx/promptr/commit/f898b368fe50df4d1c46ff254c9ca625058410b5))
+
 ## [0.10.0](https://github.com/zkrebbekx/promptr/compare/v0.9.0...v0.10.0) (2026-06-27)
 
 
