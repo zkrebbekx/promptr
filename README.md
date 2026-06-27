@@ -400,8 +400,9 @@ stdlib `log/slog`) is the reference implementation.
 ## Tooling & editor support
 
 ```sh
-promptr generate ./...   # compile .promptr -> Go (run under //go:generate)
-promptr check ./...       # parse + validate without writing Go (CI-friendly)
+promptr generate ./...    # compile .promptr -> Go (run under //go:generate)
+promptr check ./...        # parse + validate without writing Go (CI-friendly)
+promptr fmt -w ./...       # canonically format .promptr files in place
 ```
 
 `promptr check` reports unresolved types/clients, malformed unions and `test`
@@ -409,11 +410,17 @@ blocks whose args don't match their function — the same checks the language
 server surfaces in your editor. Install `cmd/promptr-lsp` for live diagnostics
 and see [`editor/`](editor/) for the tree-sitter grammar and editor wiring.
 
-> Deferred for a focused follow-up: `promptr fmt` (a canonical formatter needs
-> the lexer to retain comments, currently dropped as trivia) and a
-> live-execution `test` runner with typed assertions (best done by emitting Go
-> tests from `test` blocks, which deserves its own provider-wiring design).
-> `providers/recorded` is the deterministic substrate both will build on.
+`promptr fmt` rewrites files into a canonical, idempotent layout: 2-space
+indent, aligned class fields and client settings, a stable order for field
+attributes, and source declaration order preserved. Comments survive — a leading
+`//` block hugs the declaration or field below it, a trailing comment stays on
+its line. Default writes to stdout; `-w` rewrites in place; `-l` lists files that
+aren't formatted (exit 1, for CI).
+
+> Deferred for a focused follow-up: a live-execution `test` runner with typed
+> assertions (best done by emitting Go tests from `test` blocks, which deserves
+> its own provider-wiring design). `providers/recorded` is the deterministic
+> substrate it will build on.
 
 ## Install
 
