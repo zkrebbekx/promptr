@@ -390,12 +390,12 @@ func (p *parser) parseTool() ToolDecl {
 func (p *parser) parseTest() TestDecl {
 	kw := p.advance() // test
 	name := p.expect(tIdent, "test name")
-	d := TestDecl{Name: name.text, Line: kw.line, Args: map[string]string{}}
+	d := TestDecl{Name: name.text, Line: kw.line, Args: map[string]string{}, Expect: map[string]string{}}
 	p.expect(tLBrace, "'{'")
 	for p.cur().kind != tRBrace && p.cur().kind != tEOF {
 		key := p.cur()
 		if key.kind != tIdent {
-			p.errf(key, "expected 'function' or 'args', got %q", key.text)
+			p.errf(key, "expected 'function', 'args' or 'expect', got %q", key.text)
 			p.advance()
 			continue
 		}
@@ -404,24 +404,34 @@ func (p *parser) parseTest() TestDecl {
 		case "function":
 			d.Func = p.expect(tIdent, "function name").text
 		case "args":
-			p.expect(tLBrace, "'{'")
-			for p.cur().kind != tRBrace && p.cur().kind != tEOF {
-				ak := p.expect(tIdent, "arg name")
-				av := p.cur()
-				switch av.kind {
-				case tString, tRawString, tIdent:
-					d.Args[ak.text] = av.text
-					p.advance()
-				default:
-					p.errf(av, "expected arg value")
-					p.advance()
-				}
-			}
-			p.expect(tRBrace, "'}'")
+			p.parseKVBlock(d.Args, nil)
+		case "expect":
+			d.ExpectKeys = p.parseKVBlock(d.Expect, d.ExpectKeys)
 		default:
 			p.errf(key, "unknown test key %q", key.text)
 		}
 	}
 	p.expect(tRBrace, "'}'")
 	return d
+}
+
+// parseKVBlock reads a `{ name value ... }` block of string/number/ident values
+// into dst, appending each key (in source order) to order and returning it.
+func (p *parser) parseKVBlock(dst map[string]string, order []string) []string {
+	p.expect(tLBrace, "'{'")
+	for p.cur().kind != tRBrace && p.cur().kind != tEOF {
+		k := p.expect(tIdent, "name")
+		v := p.cur()
+		switch v.kind {
+		case tString, tRawString, tIdent, tNumber:
+			dst[k.text] = v.text
+			order = append(order, k.text)
+			p.advance()
+		default:
+			p.errf(v, "expected a value")
+			p.advance()
+		}
+	}
+	p.expect(tRBrace, "'}'")
+	return order
 }

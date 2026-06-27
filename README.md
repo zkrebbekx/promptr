@@ -419,10 +419,44 @@ attributes, and source declaration order preserved. Comments survive — a leadi
 its line. Default writes to stdout; `-w` rewrites in place; `-l` lists files that
 aren't formatted (exit 1, for CI).
 
-> Deferred for a focused follow-up: a live-execution `test` runner with typed
-> assertions (best done by emitting Go tests from `test` blocks, which deserves
-> its own provider-wiring design). `providers/recorded` is the deterministic
-> substrate it will build on.
+### Live tests from `test` blocks
+
+A `test` block names a function, its `args`, and the `expect`ed fields of the
+typed result:
+
+```
+test outage {
+  function ExtractTicket
+  args   { text "the production server is DOWN!" }
+  expect {
+    title    "Server is down"
+    severity CRITICAL
+    open     true
+    votes    3
+  }
+}
+```
+
+`promptr generate` compiles it to a sibling `*_test.go` with a real
+`func TestOutage(t *testing.T)` that calls the function and asserts each field
+with a typed comparison (strings, numbers, bools, and enum members all become Go
+literals — `CRITICAL` → `SeverityCRITICAL`). The generated tests run against a
+package-level `PromptrProvider` you set, typically in `TestMain`:
+
+```go
+func TestMain(m *testing.M) {
+	PromptrProvider = fake.New(`{"title":"Server is down","severity":"CRITICAL","open":true,"votes":3}`)
+	os.Exit(m.Run())
+}
+```
+
+Wire `providers/fake` or `providers/recorded` for deterministic CI, or a live
+provider to run the same blocks against a real model — the assertions are
+identical either way. Tests `Skip` while `PromptrProvider` is nil. A block with no
+`expect` becomes a smoke test that only asserts the call returns no error. See
+[`examples/livetest`](examples/livetest/). (`promptr check` rejects `expect`s that
+name unknown fields, mismatch a field's type, or target a streaming/tool
+function.)
 
 ## Install
 
@@ -442,8 +476,9 @@ cask.
 A WebAssembly playground runs entirely client-side — no API calls — at
 **[zkrebbekx.github.io/promptr](https://zkrebbekx.github.io/promptr/)**. It has a
 clickable gallery of examples (typed extraction, unions & attributes, streaming,
-`@assert`/`@check` validation, the tool-calling agent loop) plus a live
-`promptr fmt` button and the messy-output → repaired-value parser. Source in
+`@assert`/`@check` validation, the tool-calling agent loop, and live tests that
+emit a `_test.go`) plus a live `promptr fmt` button and the messy-output →
+repaired-value parser. Source in
 [`playground/`](playground/); deployed to GitHub Pages from tagged `main`, so it
 always reflects the latest release.
 

@@ -220,11 +220,30 @@ func compileFile(in, pkgOverride string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(outPath(in), out, 0o644)
+	if err := os.WriteFile(outPath(in), out, 0o644); err != nil {
+		return err
+	}
+	// Emit a sibling _test.go for any `test` blocks; remove a stale one when the
+	// file no longer has assertable tests, so toggling tests off stays clean.
+	tests, terr := codegen.GenerateTests(pkg, f)
+	if terr != nil {
+		return terr
+	}
+	if tests == nil {
+		if rerr := os.Remove(testPath(in)); rerr != nil && !os.IsNotExist(rerr) {
+			return rerr
+		}
+		return nil
+	}
+	return os.WriteFile(testPath(in), tests, 0o644)
 }
 
 func outPath(in string) string {
 	return strings.TrimSuffix(in, ".promptr") + ".promptr.go"
+}
+
+func testPath(in string) string {
+	return strings.TrimSuffix(in, ".promptr") + ".promptr_test.go"
 }
 
 // collect resolves the path args to a deduplicated list of .promptr files.

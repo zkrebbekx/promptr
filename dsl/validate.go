@@ -167,6 +167,19 @@ func (v *validator) checkTests(f *File) {
 			v.addf(t.Line, "test %q references unknown function %q", t.Name, t.Func)
 			continue
 		}
+		// A generated Go test invokes the function directly, so the target must be
+		// a plain (non-streaming, non-tool) function with no binary-part params.
+		switch {
+		case fn.Stream:
+			v.addf(t.Line, "test %q cannot target streaming function %q", t.Name, t.Func)
+		case len(fn.Tools) > 0:
+			v.addf(t.Line, "test %q cannot target tool-using function %q", t.Name, t.Func)
+		}
+		for _, pm := range fn.Params {
+			if isPartName(pm.Type.Name) {
+				v.addf(t.Line, "test %q cannot target %q: parameter %q is a binary part", t.Name, t.Func, pm.Name)
+			}
+		}
 		params := map[string]bool{}
 		for _, pm := range fn.Params {
 			params[pm.Name] = true
@@ -181,7 +194,132 @@ func (v *validator) checkTests(f *File) {
 				v.addf(t.Line, "test %q is missing arg %q required by %q", t.Name, pm.Name, t.Func)
 			}
 		}
+		v.checkExpect(f, t, fn)
 	}
+}
+
+// checkExpect validates a test's `expect` block: the function's return type must
+// be a class, each expected key a field of it, and each value compatible with
+// that field's (scalar or enum) type. List/map/union fields and non-class
+// returns are not assertable.
+func (v *validator) checkExpect(f *File, t TestDecl, fn FuncDecl) {
+	if len(t.Expect) == 0 {
+		return
+	}
+	cls, ok := classByName(f, fn.Ret.Name)
+	if !ok || fn.Ret.List || fn.Ret.Map || len(fn.Ret.Union) > 0 {
+		v.addf(t.Line, "test %q has expect, but %q does not return a class", t.Name, t.Func)
+		return
+	}
+	fields := map[string]TypeRef{}
+	for _, fld := range cls.Fields {
+		fields[fld.Name] = fld.Type
+	}
+	for _, k := range t.ExpectKeys {
+		ft, isField := fields[k]
+		if !isField {
+			v.addf(t.Line, "test %q expects field %q, not a field of %q", t.Name, k, cls.Name)
+			continue
+		}
+		if ft.List || ft.Map || len(ft.Union) > 0 {
+			v.addf(t.Line, "test %q cannot assert field %q: only scalar and enum fields are assertable", t.Name, k)
+			continue
+		}
+		val := t.Expect[k]
+		switch {
+		case isPrimitive(ft.Name):
+			if !valueFitsPrimitive(ft.Name, val) {
+				v.addf(t.Line, "test %q field %q expects a %s, got %q", t.Name, k, ft.Name, val)
+			}
+		case v.enums[ft.Name]:
+			if !enumHasMember(f, ft.Name, val) {
+				v.addf(t.Line, "test %q field %q expects a %s member, got %q", t.Name, k, ft.Name, val)
+			}
+		default:
+			v.addf(t.Line, "test %q cannot assert field %q of type %q", t.Name, k, ft.Name)
+		}
+	}
+}
+
+func classByName(f *File, name string) (ClassDecl, bool) {
+	for _, c := range f.Classes {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return ClassDecl{}, false
+}
+
+func enumHasMember(f *File, enum, member string) bool {
+	for _, e := range f.Enums {
+		if e.Name != enum {
+			continue
+		}
+		for _, m := range e.Members {
+			if m == member {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// valueFitsPrimitive reports whether the literal text is well-formed for a
+// primitive field type (numbers must parse; bools must be true/false; strings
+// accept anything).
+func valueFitsPrimitive(prim, val string) bool {
+	switch prim {
+	case "string":
+		return true
+	case "bool":
+		return val == "true" || val == "false"
+	case "int":
+		return isIntLit(val)
+	case "float":
+		return isFloatLit(val)
+	default:
+		return false
+	}
+}
+
+func isIntLit(s string) bool {
+	if s == "" {
+		return false
+	}
+	i := 0
+	if s[0] == '-' {
+		if len(s) == 1 {
+			return false
+		}
+		i = 1
+	}
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isFloatLit(s string) bool {
+	if s == "" {
+		return false
+	}
+	i, dots, digits := 0, 0, 0
+	if s[0] == '-' {
+		i = 1
+	}
+	for ; i < len(s); i++ {
+		switch {
+		case s[i] >= '0' && s[i] <= '9':
+			digits++
+		case s[i] == '.':
+			dots++
+		default:
+			return false
+		}
+	}
+	return digits > 0 && dots <= 1
 }
 
 func funcByName(f *File, name string) (FuncDecl, bool) {

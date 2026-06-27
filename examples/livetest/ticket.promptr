@@ -1,0 +1,45 @@
+// A schema with `test` blocks: `promptr generate` emits a runnable Go test
+// (ticket.promptr_test.go) whose assertions check the typed result field-by-field
+// against a PromptrProvider you wire up — here a deterministic providers/fake.
+enum Severity { LOW HIGH CRITICAL }
+
+class Ticket {
+  title    string
+  severity Severity
+  open     bool
+  votes    int
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ExtractTicket(text: string) -> Ticket {
+  client Default
+  prompt #"
+    Extract a support ticket from the message.
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  "#
+}
+
+test outage {
+  function ExtractTicket
+  args {
+    text "the production server is DOWN, this is critical!!"
+  }
+  expect {
+    open     true
+    severity "CRITICAL"
+    title    "Server is down"
+    votes    3
+  }
+}
+
+test smoke {
+  function ExtractTicket
+  args {
+    text "minor typo on the about page"
+  }
+}

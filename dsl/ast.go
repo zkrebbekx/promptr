@@ -129,11 +129,16 @@ type FuncDecl struct {
 	Line  int
 }
 
-// TestDecl is `test Name { function F args { k v ... } }` — an example
-// invocation the compiler turns into a runnable test.
+// TestDecl is `test Name { function F args { k v ... } expect { k v ... } }` — an
+// example invocation the compiler turns into a runnable Go test. When Expect is
+// non-empty the generated test asserts those fields of the typed result equal the
+// given values (typed comparisons: strings, numbers, bools, and enum members).
 type TestDecl struct {
-	Name string
-	Func string
-	Args map[string]string
-	Line int
+	Name   string
+	Func   string
+	Args   map[string]string
+	Expect map[string]string
+	// ExpectKeys preserves the source order of Expect for stable test output.
+	ExpectKeys []string
+	Line       int
 }
