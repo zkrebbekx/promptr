@@ -26,6 +26,17 @@ func Parse(src string) (*File, error) {
 	return f, nil
 }
 
+// lexComments runs the lexer over src and returns the `//` comments it found,
+// in source order. It uses the real lexer so `//` inside string/raw-string
+// literals is never mistaken for a comment.
+func lexComments(src string) []comment {
+	l := newLexer(src)
+	for t := l.next(); t.kind != tEOF; t = l.next() {
+		_ = t
+	}
+	return l.comments
+}
+
 type parser struct {
 	toks []token
 	i    int
@@ -130,7 +141,7 @@ func (p *parser) parseClass() ClassDecl {
 		}
 		p.advance()
 		typ := p.parseTypeRef()
-		fld := FieldDecl{Name: fn.text, Type: typ}
+		fld := FieldDecl{Name: fn.text, Type: typ, Line: fn.line}
 		p.parseFieldAttrs(&fld)
 		d.Fields = append(d.Fields, fld)
 		p.accept(tComma)

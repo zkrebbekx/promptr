@@ -3,6 +3,7 @@
 // Usage:
 //
 //	promptr generate [path ...]   compile .promptr files (default ".")
+//	promptr fmt [-w] [path ...]   canonically format .promptr files
 //	promptr version               print version
 //
 // A path may be a .promptr file, a directory (its *.promptr files), or a
@@ -36,6 +37,8 @@ func main() {
 		os.Exit(cmdGenerate(os.Args[2:]))
 	case "check":
 		os.Exit(cmdCheck(os.Args[2:]))
+	case "fmt":
+		os.Exit(cmdFmt(os.Args[2:]))
 	case "version", "-v", "--version":
 		fmt.Println("promptr", version)
 	case "-h", "--help", "help":
@@ -53,9 +56,71 @@ func usage() {
 usage:
   promptr generate [-pkg name] [path ...]   compile .promptr files (default ".")
   promptr check [path ...]                  parse + validate without writing Go
+  promptr fmt [-w] [-l] [path ...]          canonically format .promptr files
   promptr version
 
 `)
+}
+
+// cmdFmt canonically formats .promptr files. By default it writes the formatted
+// source to stdout; -w rewrites files in place, and -l lists files that are not
+// already formatted (exit 1 if any are, for CI). A parse error leaves the file
+// untouched and is reported.
+func cmdFmt(args []string) int {
+	fs := flag.NewFlagSet("fmt", flag.ExitOnError)
+	write := fs.Bool("w", false, "rewrite files in place instead of writing to stdout")
+	list := fs.Bool("l", false, "list files whose formatting differs from promptr fmt")
+	_ = fs.Parse(args)
+	paths := fs.Args()
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+
+	files, err := collect(paths)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "promptr:", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "promptr: no .promptr files found")
+		return 1
+	}
+
+	rc := 0
+	for _, in := range files {
+		srcBytes, rerr := os.ReadFile(in)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "promptr: %s: %v\n", in, rerr)
+			rc = 1
+			continue
+		}
+		out, ferr := dsl.Format(string(srcBytes))
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", in, ferr)
+			rc = 1
+			continue
+		}
+		changed := out != string(srcBytes)
+		switch {
+		case *list:
+			if changed {
+				fmt.Println(in)
+				rc = 1
+			}
+		case *write:
+			if changed {
+				if werr := os.WriteFile(in, []byte(out), 0o644); werr != nil {
+					fmt.Fprintf(os.Stderr, "promptr: %s: %v\n", in, werr)
+					rc = 1
+					continue
+				}
+				fmt.Println("promptr: formatted", in)
+			}
+		default:
+			fmt.Print(out)
+		}
+	}
+	return rc
 }
 
 // cmdCheck parses and semantically validates .promptr files without generating

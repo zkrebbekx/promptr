@@ -1,12 +1,12 @@
 // Routing an inbound message to one of several typed actions — the v0.3
 // union + attributes showcase.
 class Search {
-  query  string @description("the search terms to look up")
-  topk   int    @alias("max_results")
+  query string @description("the search terms to look up")
+  topk  int    @alias("max_results")
 }
 
 class Escalate {
-  reason   string            @description("why this needs a human")
+  reason   string @description("why this needs a human")
   metadata map<string, string>
 }
 

@@ -34,13 +34,24 @@ type token struct {
 	line int
 }
 
+// comment is a `//` line comment captured during lexing (skipTrivia drops them
+// from the token stream, but the formatter needs them back). standalone is true
+// when only whitespace precedes the comment on its line — a leading comment, as
+// opposed to a trailing one that sits after code.
+type comment struct {
+	text       string
+	line       int
+	standalone bool
+}
+
 // lexer turns .promptr source into a token stream. It mirrors the structure of
 // pgparse's lexer: a cursor over the source with small scan* helpers per token
 // shape and a skipTrivia pass for whitespace and // comments.
 type lexer struct {
-	src  string
-	pos  int
-	line int
+	src      string
+	pos      int
+	line     int
+	comments []comment
 }
 
 func newLexer(s string) *lexer { return &lexer{src: s, line: 1} }
@@ -123,9 +134,21 @@ func (l *lexer) skipTrivia() {
 			l.line++
 			l.pos++
 		case c == '/' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '/':
+			cs := l.pos
+			ls := cs
+			for ls > 0 && l.src[ls-1] != '\n' {
+				ls--
+			}
+			standalone := strings.TrimSpace(l.src[ls:cs]) == ""
+			l.pos += 2 // //
 			for l.pos < len(l.src) && l.src[l.pos] != '\n' {
 				l.pos++
 			}
+			l.comments = append(l.comments, comment{
+				text:       strings.TrimRight(l.src[cs+2:l.pos], " \t\r"),
+				line:       l.line,
+				standalone: standalone,
+			})
 		default:
 			return
 		}

@@ -62,6 +62,7 @@ type FieldDecl struct {
 	Alias  string // @alias("...") — alternate wire/prompt name for this field
 	Assert string // @assert("<valx rules>") — hard constraints; failure drives a repair re-ask
 	Check  string // @check("<valx rules>") — soft constraints; violations are advisory
+	Line   int    // source line of the field, for comment attachment in `promptr fmt`
 }
 
 // TypeRef names a field/return/param type: a primitive (string, int, float,

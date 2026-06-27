@@ -1,5 +1,4 @@
 // A trip planner that calls tools, then returns a typed itinerary.
-
 class Weather {
   city       string
   conditions string
@@ -17,7 +16,10 @@ class Itinerary {
   packing     string[]
 }
 
-client Smart { provider "anthropic" model "claude-opus-4-8" }
+client Smart {
+  provider "anthropic"
+  model    "claude-opus-4-8"
+}
 
 tool GetWeather(city: string) -> Weather {
   description "Look up the current weather for a city."
