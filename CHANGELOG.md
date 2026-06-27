@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/zkrebbekx/promptr/compare/v0.7.0...v0.8.0) (2026-06-27)
+
+
+### Features
+
+* @assert/[@check](https://github.com/check) field validation via valx ([#15](https://github.com/zkrebbekx/promptr/issues/15)) ([f7b2d4d](https://github.com/zkrebbekx/promptr/commit/f7b2d4d915f463b1bee57f72ba09b17fc89451aa))
+
 ## [0.7.0](https://github.com/zkrebbekx/promptr/compare/v0.6.0...v0.7.0) (2026-06-27)
 
 
