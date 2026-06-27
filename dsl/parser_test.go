@@ -305,6 +305,35 @@ function PlanTrip(goal: string) -> Itinerary {
 	})
 }
 
+func TestParseFuncDescriptionAndSubAgent(t *testing.T) {
+	Convey("Given a function with a description that is used as a sub-agent", t, func() {
+		f, err := Parse(`
+class Research { summary string }
+class Brief { topic string }
+client C { provider "fake" model "x" }
+function ResearchTopic(topic: string) -> Research {
+  client C
+  description "Research a topic."
+  prompt #"{{ topic }}"#
+}
+function WriteBrief(req: string) -> Brief {
+  client C
+  tools [ResearchTopic]
+  prompt #"{{ req }}"#
+}`)
+		So(err, ShouldBeNil)
+
+		Convey("Then the sub-agent function's description is parsed", func() {
+			So(f.Funcs[0].Name, ShouldEqual, "ResearchTopic")
+			So(f.Funcs[0].Description, ShouldEqual, "Research a topic.")
+		})
+
+		Convey("Then the orchestrator records the function ref in its tools list", func() {
+			So(f.Funcs[1].Tools, ShouldResemble, []string{"ResearchTopic"})
+		})
+	})
+}
+
 func TestParseTestExpect(t *testing.T) {
 	Convey("Given a test block with an expect section and numeric/bool values", t, func() {
 		f, err := Parse(`

@@ -2,7 +2,7 @@
 
 // VERSION is the promptr release this playground is built from. The WASM is
 // compiled against the tagged source, so bump this whenever a new version ships.
-const VERSION = "v0.13.0";
+const VERSION = "v0.14.0";
 
 // EXAMPLES is the clickable gallery. Each entry is a self-contained .promptr
 // snippet that showcases one capability; clicking a chip loads it into the DSL
@@ -157,6 +157,45 @@ function PlanTrip(goal: string) -> Itinerary {
     Plan a trip for this goal, using the tools to check weather and flights.
     {{ ctx.output_schema }}
     Goal: {{ goal }}
+  "#
+}`,
+  },
+  {
+    id: "multiagent",
+    label: "Multi-agent",
+    blurb: "List a function in another function's tools and it becomes a self-contained sub-agent — auto-wired, no handler. The orchestrator (WriteBrief) takes no handlers struct; its loop calls ResearchTopic directly. (v0.14)",
+    dsl: `class Research {
+  summary string
+  sources string[]
+}
+
+class Brief {
+  topic          string
+  recommendation string
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ResearchTopic(topic: string) -> Research {
+  client Default
+  description "Research a topic and return a summary with sources."
+  prompt #"
+    Research the topic and summarize what you find.
+    {{ ctx.output_schema }}
+    Topic: {{ topic }}
+  "#
+}
+
+function WriteBrief(request: string) -> Brief {
+  client Default
+  tools [ResearchTopic]
+  prompt #"
+    Write a decision brief. Use the ResearchTopic sub-agent for background.
+    {{ ctx.output_schema }}
+    Request: {{ request }}
   "#
 }`,
   },

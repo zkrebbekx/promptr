@@ -1,0 +1,41 @@
+// Multi-agent orchestration: a coordinator function delegates to another
+// promptr function as a self-contained sub-agent. WriteBrief lists ResearchTopic
+// in its `tools`, so the compiler auto-wires ResearchTopic as a tool — no Go
+// handler needed. At runtime the orchestrator's agent loop calls the sub-agent,
+// which runs its own typed extraction on the same provider and feeds the typed
+// Research result back into the loop.
+class Research {
+  summary string
+  sources string[]
+}
+
+class Brief {
+  topic          string
+  recommendation string
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ResearchTopic(topic: string) -> Research {
+  client Default
+  description "Research a topic and return a short summary with sources."
+  prompt #"
+    Research the topic and summarize what you find.
+    {{ ctx.output_schema }}
+    Topic: {{ topic }}
+  "#
+}
+
+function WriteBrief(request: string) -> Brief {
+  client Default
+  tools [ResearchTopic]
+  prompt #"
+    Write a decision brief for the request. Use the ResearchTopic sub-agent to
+    gather background before recommending.
+    {{ ctx.output_schema }}
+    Request: {{ request }}
+  "#
+}

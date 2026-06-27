@@ -260,6 +260,71 @@ function MakePlan(goal: string) -> Plan {
 	})
 }
 
+func TestGenerateSubAgent(t *testing.T) {
+	Convey("Given a function that delegates to another function as a sub-agent", t, func() {
+		code := generate(t, `
+class Research { summary string }
+class Brief { topic string }
+
+function ResearchTopic(topic: string) -> Research {
+  client C
+  description "Research a topic."
+  prompt #"Research it. {{ ctx.output_schema }} Topic: {{ topic }}"#
+}
+
+function WriteBrief(request: string) -> Brief {
+  client C
+  tools [ResearchTopic]
+  prompt #"Write it. {{ ctx.output_schema }} Request: {{ request }}"#
+}`)
+
+		Convey("Then an args struct is emitted for the sub-agent function", func() {
+			So(code, ShouldContainSubstring, "type ResearchTopicArgs struct {")
+			So(code, ShouldContainSubstring, "Topic string `json:\"topic\"`")
+		})
+
+		Convey("Then the orchestrator takes NO handlers struct (sub-agent is auto-wired)", func() {
+			So(code, ShouldNotContainSubstring, "type WriteBriefTools struct {")
+			So(code, ShouldNotContainSubstring, "tools WriteBriefTools")
+			So(code, ShouldContainSubstring, "func WriteBrief(ctx context.Context, p promptr.Provider, request string, opt ...promptr.Option)")
+		})
+
+		Convey("Then the loop wraps the sub-agent: coerce args, call it with the same provider", func() {
+			So(code, ShouldContainSubstring, "promptr.RunTools[Brief](ctx, p, prompt, []promptr.Tool{")
+			So(code, ShouldContainSubstring, `Name: "ResearchTopic", Description: "Research a topic."`)
+			So(code, ShouldContainSubstring, "coerce.Into[ResearchTopicArgs](argsJSON)")
+			So(code, ShouldContainSubstring, "ResearchTopic(ctx, p, args.Topic)")
+			So(code, ShouldContainSubstring, "json.Marshal(result)")
+		})
+
+		Convey("Then the output is valid Go", func() {
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a sub-agent with no declared description", t, func() {
+		code := generate(t, `
+class Research { summary string }
+class Brief { topic string }
+
+function ResearchTopic(topic: string) -> Research {
+  client C
+  prompt #"Research it. {{ ctx.output_schema }} Topic: {{ topic }}"#
+}
+
+function WriteBrief(request: string) -> Brief {
+  client C
+  tools [ResearchTopic]
+  prompt #"Write it. {{ ctx.output_schema }} Request: {{ request }}"#
+}`)
+
+		Convey("Then a default delegation description is synthesized", func() {
+			So(code, ShouldContainSubstring, `Description: "Delegate to the ResearchTopic sub-agent."`)
+		})
+	})
+}
+
 func TestGenerateStreamAndMultimodal(t *testing.T) {
 	Convey("Given a streaming function with an image param", t, func() {
 		code := generate(t, `

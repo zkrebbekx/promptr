@@ -23,7 +23,7 @@ const valxPkg = "github.com/zkrebbekx/valx"
 // Generate renders the whole File as a single Go source file in package pkg.
 func Generate(pkg string, f *dsl.File) ([]byte, error) {
 	desugarInlineUnions(f)
-	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}, unions: map[string]dsl.UnionDecl{}, tools: map[string]dsl.ToolDecl{}}
+	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}, unions: map[string]dsl.UnionDecl{}, tools: map[string]dsl.ToolDecl{}, funcs: map[string]dsl.FuncDecl{}, subAgents: map[string]bool{}}
 	for _, e := range f.Enums {
 		g.enums[e.Name] = e
 	}
@@ -32,6 +32,21 @@ func Generate(pkg string, f *dsl.File) ([]byte, error) {
 	}
 	for _, t := range f.Tools {
 		g.tools[t.Name] = t
+	}
+	for _, fn := range f.Funcs {
+		g.funcs[fn.Name] = fn
+	}
+	// A function named in another function's `tools` list (and not a declared
+	// tool) is a sub-agent: it needs a generated args struct so the orchestrator
+	// can coerce the model's JSON call into it.
+	for _, fn := range f.Funcs {
+		for _, ref := range fn.Tools {
+			if _, isTool := g.tools[ref]; !isTool {
+				if _, isFunc := g.funcs[ref]; isFunc {
+					g.subAgents[ref] = true
+				}
+			}
+		}
 	}
 	src := g.render()
 	out, err := format.Source([]byte(src))
@@ -62,6 +77,8 @@ type gen struct {
 	enums      map[string]dsl.EnumDecl
 	unions     map[string]dsl.UnionDecl
 	tools      map[string]dsl.ToolDecl
+	funcs      map[string]dsl.FuncDecl
+	subAgents  map[string]bool // functions delegated to as sub-agents (need an args struct)
 	usedCtx    bool
 	usedCoerce bool // generated code references the coerce package
 	usedJSON   bool // generated code references encoding/json
@@ -225,9 +242,16 @@ func clientRefs(names []string) string {
 // are coerced into this struct (in the generated handler wrapper) before the
 // user's handler runs.
 func (g *gen) renderTool(b *strings.Builder, t dsl.ToolDecl) {
-	fmt.Fprintf(b, "// %sArgs are the typed arguments for the %q tool.\n", t.Name, t.Name)
-	fmt.Fprintf(b, "type %sArgs struct {\n", t.Name)
-	for _, pm := range t.Params {
+	g.renderArgsStruct(b, t.Name, "tool", t.Params)
+}
+
+// renderArgsStruct emits a `<name>Args` struct whose fields mirror params. The
+// model's JSON arguments are coerced into it before a tool handler (or sub-agent
+// function) is invoked. what describes the owner for the doc comment.
+func (g *gen) renderArgsStruct(b *strings.Builder, name, what string, params []dsl.Param) {
+	fmt.Fprintf(b, "// %sArgs are the typed arguments for the %q %s.\n", name, name, what)
+	fmt.Fprintf(b, "type %sArgs struct {\n", name)
+	for _, pm := range params {
 		tag := pm.Name
 		if pm.Type.Optional {
 			tag += ",omitempty"
@@ -237,19 +261,35 @@ func (g *gen) renderTool(b *strings.Builder, t dsl.ToolDecl) {
 	b.WriteString("}\n\n")
 }
 
-// toolParamSchema renders the human-readable argument schema baked into the
+// toolParamSchema renders the human-readable argument schema baked into a
 // tool's ToolDef, in the same style as schemaFor's class shapes.
 func (g *gen) toolParamSchema(t dsl.ToolDecl) string {
-	if len(t.Params) == 0 {
+	return g.paramSchema(t.Params)
+}
+
+func (g *gen) paramSchema(params []dsl.Param) string {
+	if len(params) == 0 {
 		return "No arguments."
 	}
 	var b strings.Builder
 	b.WriteString("A JSON object with:\n{\n")
-	for _, pm := range t.Params {
+	for _, pm := range params {
 		fmt.Fprintf(&b, "  %q: %s%s\n", pm.Name, g.schemaType(pm.Type), optNote(pm.Type))
 	}
 	b.WriteString("}")
 	return b.String()
+}
+
+// needsHandlers reports whether a function's tools list contains at least one
+// Go-backed `tool` (vs. only sub-agent function refs). Only such functions take
+// a generated `<Func>Tools` handlers struct.
+func (g *gen) needsHandlers(fn dsl.FuncDecl) bool {
+	for _, name := range fn.Tools {
+		if _, ok := g.tools[name]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
@@ -262,9 +302,15 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 			partParams = append(partParams, pm)
 		}
 	}
-	// A tool-using function takes an extra typed handlers struct and runs the
-	// agent loop; emit that struct type first.
-	if len(fn.Tools) > 0 {
+	// When this function is delegated to as a sub-agent, emit the args struct the
+	// orchestrator coerces the model's JSON call into.
+	if g.subAgents[fn.Name] {
+		g.renderArgsStruct(b, fn.Name, "sub-agent", fn.Params)
+	}
+	// A function that calls Go-backed tools takes an extra typed handlers struct;
+	// a pure sub-agent orchestrator (only function refs) needs none. Either way it
+	// runs the agent loop. Emit the handlers struct type first.
+	if g.needsHandlers(fn) {
 		g.renderToolHandlers(b, fn)
 		params = append(params, "tools "+fn.Name+"Tools")
 	}
@@ -334,25 +380,63 @@ func (g *gen) renderToolCall(b *strings.Builder, fn dsl.FuncDecl, elem string) {
 	g.usedJSON = true
 	b.WriteString("\treturn promptr.RunTools[" + elem + "](ctx, p, prompt, []promptr.Tool{\n")
 	for _, name := range fn.Tools {
-		t, ok := g.tools[name]
-		if !ok {
+		if t, ok := g.tools[name]; ok {
+			g.renderToolEntry(b, t)
 			continue
 		}
-		b.WriteString("\t\t{\n")
-		fmt.Fprintf(b, "\t\t\tDef: promptr.ToolDef{Name: %q, Description: %q, Params: %s},\n",
-			t.Name, t.Description, quote(g.toolParamSchema(t)))
-		b.WriteString("\t\t\tInvoke: func(ctx context.Context, argsJSON string) (string, error) {\n")
-		fmt.Fprintf(b, "\t\t\t\targs, err := coerce.Into[%sArgs](argsJSON)\n", name)
-		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
-		fmt.Fprintf(b, "\t\t\t\tresult, err := tools.%s(ctx, args)\n", name)
-		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
-		b.WriteString("\t\t\t\tout, err := json.Marshal(result)\n")
-		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
-		b.WriteString("\t\t\t\treturn string(out), nil\n")
-		b.WriteString("\t\t\t},\n")
-		b.WriteString("\t\t},\n")
+		if sub, ok := g.funcs[name]; ok {
+			g.renderSubAgentEntry(b, sub)
+		}
 	}
 	b.WriteString("\t}, options)\n}\n\n")
+}
+
+// renderToolEntry emits one promptr.Tool wrapping a caller-supplied Go handler:
+// coerce the model's JSON args into the typed struct, call the handler, marshal
+// the typed result back to JSON for the model.
+func (g *gen) renderToolEntry(b *strings.Builder, t dsl.ToolDecl) {
+	b.WriteString("\t\t{\n")
+	fmt.Fprintf(b, "\t\t\tDef: promptr.ToolDef{Name: %q, Description: %q, Params: %s},\n",
+		t.Name, t.Description, quote(g.toolParamSchema(t)))
+	b.WriteString("\t\t\tInvoke: func(ctx context.Context, argsJSON string) (string, error) {\n")
+	fmt.Fprintf(b, "\t\t\t\targs, err := coerce.Into[%sArgs](argsJSON)\n", t.Name)
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	fmt.Fprintf(b, "\t\t\t\tresult, err := tools.%s(ctx, args)\n", t.Name)
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	b.WriteString("\t\t\t\tout, err := json.Marshal(result)\n")
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	b.WriteString("\t\t\t\treturn string(out), nil\n")
+	b.WriteString("\t\t\t},\n")
+	b.WriteString("\t\t},\n")
+}
+
+// renderSubAgentEntry emits one promptr.Tool that delegates to another generated
+// function — a self-contained sub-agent. No caller handler is needed: the Invoke
+// coerces the model's JSON args into the sub-agent's args struct and calls the
+// generated function directly, threading the same provider so the sub-agent runs
+// its own typed extraction (or nested loop) and feeds the result back up.
+func (g *gen) renderSubAgentEntry(b *strings.Builder, sub dsl.FuncDecl) {
+	desc := sub.Description
+	if desc == "" {
+		desc = "Delegate to the " + sub.Name + " sub-agent."
+	}
+	b.WriteString("\t\t{\n")
+	fmt.Fprintf(b, "\t\t\tDef: promptr.ToolDef{Name: %q, Description: %q, Params: %s},\n",
+		sub.Name, desc, quote(g.paramSchema(sub.Params)))
+	b.WriteString("\t\t\tInvoke: func(ctx context.Context, argsJSON string) (string, error) {\n")
+	fmt.Fprintf(b, "\t\t\t\targs, err := coerce.Into[%sArgs](argsJSON)\n", sub.Name)
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	callArgs := []string{"ctx", "p"}
+	for _, pm := range sub.Params {
+		callArgs = append(callArgs, "args."+goName(pm.Name))
+	}
+	fmt.Fprintf(b, "\t\t\t\tresult, err := %s(%s)\n", sub.Name, strings.Join(callArgs, ", "))
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	b.WriteString("\t\t\t\tout, err := json.Marshal(result)\n")
+	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+	b.WriteString("\t\t\t\treturn string(out), nil\n")
+	b.WriteString("\t\t\t},\n")
+	b.WriteString("\t\t},\n")
 }
 
 func (g *gen) isUnion(name string) bool {

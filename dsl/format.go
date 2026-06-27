@@ -179,6 +179,9 @@ func (p *printer) fn(f FuncDecl) {
 	if f.Client != "" {
 		p.emit(0, "  client "+f.Client)
 	}
+	if f.Description != "" {
+		p.emit(0, "  description "+quote(f.Description))
+	}
 	if len(f.Tools) > 0 {
 		p.emit(0, "  tools ["+strings.Join(f.Tools, ", ")+"]")
 	}
