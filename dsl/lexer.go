@@ -20,6 +20,11 @@ const (
 	tArrow    // ->
 	tQuestion // ?
 	tComma
+	tLess    // <
+	tGreater // >
+	tPipe    // |
+	tEquals  // =
+	tAt      // @
 )
 
 type token struct {
@@ -86,6 +91,21 @@ func (l *lexer) next() token {
 	case c == ',':
 		l.pos++
 		return token{tComma, ",", start, line}
+	case c == '<':
+		l.pos++
+		return token{tLess, "<", start, line}
+	case c == '>':
+		l.pos++
+		return token{tGreater, ">", start, line}
+	case c == '|':
+		l.pos++
+		return token{tPipe, "|", start, line}
+	case c == '=':
+		l.pos++
+		return token{tEquals, "=", start, line}
+	case c == '@':
+		l.pos++
+		return token{tAt, "@", start, line}
 	}
 	// Unknown byte — skip it and continue, so a stray character can't wedge
 	// the lexer.

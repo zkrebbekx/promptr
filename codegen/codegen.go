@@ -19,9 +19,13 @@ const runtimePkg = "github.com/zkrebbekx/promptr"
 
 // Generate renders the whole File as a single Go source file in package pkg.
 func Generate(pkg string, f *dsl.File) ([]byte, error) {
-	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}}
+	desugarInlineUnions(f)
+	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}, unions: map[string]dsl.UnionDecl{}}
 	for _, e := range f.Enums {
 		g.enums[e.Name] = e
+	}
+	for _, u := range f.Unions {
+		g.unions[u.Name] = u
 	}
 	src := g.render()
 	out, err := format.Source([]byte(src))
@@ -31,10 +35,26 @@ func Generate(pkg string, f *dsl.File) ([]byte, error) {
 	return out, nil
 }
 
+// desugarInlineUnions rewrites a function whose return type is an inline union
+// (`-> A | B`) into a synthesized named union (`<Func>Result`) so the rest of
+// codegen has a single, named code path for unions.
+func desugarInlineUnions(f *dsl.File) {
+	for i := range f.Funcs {
+		ret := f.Funcs[i].Ret
+		if len(ret.Union) == 0 {
+			continue
+		}
+		name := f.Funcs[i].Name + "Result"
+		f.Unions = append(f.Unions, dsl.UnionDecl{Name: name, Variants: ret.Union, Line: f.Funcs[i].Line})
+		f.Funcs[i].Ret = dsl.TypeRef{Name: name}
+	}
+}
+
 type gen struct {
 	pkg     string
 	file    *dsl.File
 	enums   map[string]dsl.EnumDecl
+	unions  map[string]dsl.UnionDecl
 	usedCtx bool
 }
 
@@ -45,6 +65,9 @@ func (g *gen) render() string {
 	}
 	for _, c := range g.file.Classes {
 		g.renderClass(&body, c)
+	}
+	for _, u := range g.file.Unions {
+		g.renderUnion(&body, u)
 	}
 	for _, c := range g.file.Clients {
 		g.renderClient(&body, c)
@@ -100,13 +123,38 @@ func (g *gen) renderEnum(b *strings.Builder, e dsl.EnumDecl) {
 func (g *gen) renderClass(b *strings.Builder, c dsl.ClassDecl) {
 	fmt.Fprintf(b, "type %s struct {\n", c.Name)
 	for _, fld := range c.Fields {
-		tag := fld.Name
+		// @alias renames the wire/json field so the coerce kernel binds the
+		// model's output (which the baked schema shows under the alias) to it.
+		tag := wireName(fld)
 		if fld.Type.Optional {
 			tag += ",omitempty"
 		}
 		fmt.Fprintf(b, "\t%s %s `json:%q`\n", goName(fld.Name), g.goType(fld.Type), tag)
 	}
 	b.WriteString("}\n\n")
+}
+
+// wireName is the json/prompt name for a field: its @alias if set, else its
+// declared name.
+func wireName(fld dsl.FieldDecl) string {
+	if fld.Alias != "" {
+		return fld.Alias
+	}
+	return fld.Name
+}
+
+// renderUnion emits a sealed interface for a union plus an unexported marker
+// method on each variant, in the spirit of sumx's sealed sum types. coerce
+// classifies model output into a variant; the interface makes the set closed
+// and exhaustively switchable at the call site.
+func (g *gen) renderUnion(b *strings.Builder, u dsl.UnionDecl) {
+	marker := "is" + u.Name
+	fmt.Fprintf(b, "// %s is a sealed union: one of %s.\n", u.Name, strings.Join(u.Variants, ", "))
+	fmt.Fprintf(b, "type %s interface{ %s() }\n\n", u.Name, marker)
+	for _, v := range u.Variants {
+		fmt.Fprintf(b, "func (%s) %s() {}\n", v, marker)
+	}
+	b.WriteString("\n")
 }
 
 // renderClient emits a constructor that resolves a declared client (and its
@@ -158,18 +206,43 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	fmt.Fprintf(b, "\t\t\"ctx\": map[string]any{\"output_schema\": %s},\n", quote(g.schemaFor(fn.Ret)))
 	b.WriteString("\t})\n")
 	fmt.Fprintf(b, "\tif err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n", ret)
+	if u, ok := g.unions[fn.Ret.Name]; ok {
+		// Union return: classify the reply into one of the variants.
+		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, promptr.Options{Attempts: 2}, promptr.NewUnion(%s))\n}\n\n", ret, unionSamples(u))
+		return
+	}
 	fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, promptr.Options{Attempts: 2})\n}\n\n", ret)
+}
+
+// unionSamples renders the `Variant{}, ...` zero-value list for promptr.NewUnion.
+func unionSamples(u dsl.UnionDecl) string {
+	parts := make([]string, len(u.Variants))
+	for i, v := range u.Variants {
+		parts[i] = v + "{}"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // schemaFor produces the human-readable schema description embedded in the
 // prompt — BAML's "show the model the shape you want" technique, which is what
 // makes the loose reply coerce reliably.
 func (g *gen) schemaFor(t dsl.TypeRef) string {
+	if u, ok := g.unions[t.Name]; ok {
+		var b strings.Builder
+		b.WriteString("Answer with a JSON object matching exactly ONE of these shapes:\n")
+		for i, v := range u.Variants {
+			if i > 0 {
+				b.WriteString("\nOR\n")
+			}
+			b.WriteString(g.schemaFor(dsl.TypeRef{Name: v}))
+		}
+		return b.String()
+	}
 	if c := g.classByName(t.Name); c != nil {
 		var b strings.Builder
 		b.WriteString("Answer with a JSON object of exactly this shape:\n{\n")
 		for _, fld := range c.Fields {
-			fmt.Fprintf(&b, "  %q: %s%s\n", fld.Name, g.schemaType(fld.Type), optNote(fld.Type))
+			fmt.Fprintf(&b, "  %q: %s%s%s\n", wireName(fld), g.schemaType(fld.Type), optNote(fld.Type), descNote(fld))
 		}
 		b.WriteString("}")
 		return b.String()
@@ -178,6 +251,12 @@ func (g *gen) schemaFor(t dsl.TypeRef) string {
 }
 
 func (g *gen) schemaType(t dsl.TypeRef) string {
+	if t.Map {
+		return "map<string, " + g.schemaType(*t.Elem) + ">"
+	}
+	if u, ok := g.unions[t.Name]; ok {
+		return "one of {" + strings.Join(u.Variants, " | ") + "}"
+	}
 	base := t.Name
 	if e, ok := g.enums[t.Name]; ok {
 		base = "one of [" + strings.Join(e.Members, ", ") + "]"
@@ -186,6 +265,14 @@ func (g *gen) schemaType(t dsl.TypeRef) string {
 		return base + "[]"
 	}
 	return base
+}
+
+// descNote appends a field's @description to its schema line as human guidance.
+func descNote(fld dsl.FieldDecl) string {
+	if fld.Desc != "" {
+		return " // " + fld.Desc
+	}
+	return ""
 }
 
 func optNote(t dsl.TypeRef) string {
@@ -206,6 +293,15 @@ func (g *gen) classByName(name string) *dsl.ClassDecl {
 
 // goType maps a DSL TypeRef to a Go type expression.
 func (g *gen) goType(t dsl.TypeRef) string {
+	if t.Map {
+		return "map[string]" + g.goType(*t.Elem)
+	}
+	if len(t.Union) > 0 {
+		// An un-named inline union used somewhere other than a function return
+		// (e.g. a class field): no generated interface to name, so fall back to
+		// any. Named unions (t.Name) flow through primitive below.
+		return "any"
+	}
 	base := primitive(t.Name)
 	switch {
 	case t.List:

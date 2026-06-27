@@ -78,6 +78,8 @@ func (p *parser) parseFile() *File {
 			f.Enums = append(f.Enums, p.parseEnum())
 		case "class":
 			f.Classes = append(f.Classes, p.parseClass())
+		case "union":
+			f.Unions = append(f.Unions, p.parseUnion())
 		case "client":
 			f.Clients = append(f.Clients, p.parseClient())
 		case "function":
@@ -126,15 +128,70 @@ func (p *parser) parseClass() ClassDecl {
 		}
 		p.advance()
 		typ := p.parseTypeRef()
-		d.Fields = append(d.Fields, FieldDecl{Name: fn.text, Type: typ})
+		fld := FieldDecl{Name: fn.text, Type: typ}
+		p.parseFieldAttrs(&fld)
+		d.Fields = append(d.Fields, fld)
 		p.accept(tComma)
 	}
 	p.expect(tRBrace, "'}'")
 	return d
 }
 
-// parseTypeRef reads `Base`, `Base[]`, `Base?`, or `Base[]?`.
+// parseFieldAttrs consumes any trailing `@name("arg")` attributes on a field.
+func (p *parser) parseFieldAttrs(fld *FieldDecl) {
+	for p.cur().kind == tAt {
+		p.advance()
+		an := p.expect(tIdent, "attribute name")
+		p.expect(tLParen, "'('")
+		av := p.expect(tString, "attribute argument (string)")
+		p.expect(tRParen, "')'")
+		switch an.text {
+		case "description":
+			fld.Desc = av.text
+		case "alias":
+			fld.Alias = av.text
+		default:
+			p.errf(an, "unknown field attribute %q", an.text)
+		}
+	}
+}
+
+func (p *parser) parseUnion() UnionDecl {
+	kw := p.advance() // union
+	name := p.expect(tIdent, "union name")
+	d := UnionDecl{Name: name.text, Line: kw.line}
+	p.expect(tEquals, "'='")
+	d.Variants = p.parseUnionVariants()
+	return d
+}
+
+// parseUnionVariants reads `A | B | C` — one or more type names joined by '|'.
+func (p *parser) parseUnionVariants() []string {
+	out := []string{p.expect(tIdent, "union variant type").text}
+	for p.cur().kind == tPipe {
+		p.advance()
+		out = append(out, p.expect(tIdent, "union variant type").text)
+	}
+	return out
+}
+
+// parseTypeRef reads `Base`, `Base[]`, `Base?`, `Base[]?`, a `map<string, V>`,
+// or an inline union `A | B | C`.
 func (p *parser) parseTypeRef() TypeRef {
+	if p.cur().kind == tIdent && p.cur().text == "map" {
+		p.advance()
+		p.expect(tLess, "'<'")
+		p.expect(tIdent, "map key type") // key is always string
+		p.expect(tComma, "','")
+		elem := p.parseTypeRef()
+		p.expect(tGreater, "'>'")
+		tr := TypeRef{Map: true, Elem: &elem}
+		if p.cur().kind == tQuestion {
+			p.advance()
+			tr.Optional = true
+		}
+		return tr
+	}
 	base := p.expect(tIdent, "type name")
 	tr := TypeRef{Name: base.text}
 	if p.cur().kind == tLBracket {
@@ -145,6 +202,14 @@ func (p *parser) parseTypeRef() TypeRef {
 	if p.cur().kind == tQuestion {
 		p.advance()
 		tr.Optional = true
+	}
+	if p.cur().kind == tPipe {
+		variants := []string{tr.Name}
+		for p.cur().kind == tPipe {
+			p.advance()
+			variants = append(variants, p.expect(tIdent, "union variant type").text)
+		}
+		return TypeRef{Union: variants}
 	}
 	return tr
 }

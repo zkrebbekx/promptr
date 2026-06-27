@@ -111,6 +111,51 @@ for p := range coerce.Stream[Ticket](tokenChan) {
 }
 ```
 
+## Type system
+
+Beyond classes and enums, the schema language expresses the shapes real LLM
+tasks need — and each maps to idiomatic Go the `coerce` kernel already parses.
+
+**Unions** — classify output into one of several typed shapes. Compiles to a
+sealed interface (sumx-style) plus a `coerce` resolver that picks the best-fit
+variant (by shape, or an explicit `type`/`kind` discriminator):
+
+```promptr
+class Search   { query string }
+class Escalate { reason string }
+union Action = Search | Escalate          // or inline:  -> Search | Escalate
+
+function Route(message: string) -> Action {
+  client Default
+  prompt #"Search or escalate? {{ ctx.output_schema }} Message: {{ message }}"#
+}
+```
+
+```go
+act, err := Route(ctx, p, "I want a refund NOW")
+switch a := act.(type) {            // exhaustive, type-safe
+case Escalate: alertHuman(a.Reason)
+case Search:   run(a.Query)
+}
+```
+
+**Maps** — `map<string, int>` → `map[string]int`.
+
+**Field attributes** tune the schema shown to the model (better prompt ⇒ better
+parse), the BAML "symbol tuning" idea:
+
+```promptr
+class Profile {
+  name  string @description("the person's full legal name") @alias("full_name")
+  score int
+}
+```
+
+`@description` annotates the field in the baked schema; `@alias` renames it on
+the wire — the model is shown `full_name`, and `coerce` binds that back to
+`Name`. (`@assert`/`@check` validation via [valx](https://github.com/zkrebbekx/valx)
+is planned for a later release.)
+
 ## Prompt templates
 
 Prompts are more than string interpolation — the template engine supports

@@ -1,0 +1,27 @@
+// Routing an inbound message to one of several typed actions — the v0.3
+// union + attributes showcase.
+class Search {
+  query  string @description("the search terms to look up")
+  topk   int    @alias("max_results")
+}
+
+class Escalate {
+  reason   string            @description("why this needs a human")
+  metadata map<string, string>
+}
+
+union Action = Search | Escalate
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function Route(message: string) -> Action {
+  client Default
+  prompt #"
+    Decide how to handle the user's message: either run a Search or Escalate it.
+    {{ ctx.output_schema }}
+    Message: {{ message }}
+  "#
+}

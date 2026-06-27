@@ -217,3 +217,52 @@ client Spread { round_robin [Fast, Smart] }
 		})
 	})
 }
+
+func TestParseUnions(t *testing.T) {
+	Convey("Given named and inline unions", t, func() {
+		f, err := Parse(`
+class Search { query string }
+class Escalate { reason string }
+union Action = Search | Escalate
+function Route(msg: string) -> Reply | Handoff {
+  client C
+  prompt #"route {{ msg }} {{ ctx.output_schema }}"#
+}`)
+
+		Convey("Then the named union records its variants", func() {
+			So(err, ShouldBeNil)
+			So(f.Unions, ShouldHaveLength, 1)
+			So(f.Unions[0].Name, ShouldEqual, "Action")
+			So(f.Unions[0].Variants, ShouldResemble, []string{"Search", "Escalate"})
+		})
+
+		Convey("Then the inline union return is captured on the function's TypeRef", func() {
+			So(f.Funcs, ShouldHaveLength, 1)
+			So(f.Funcs[0].Ret.Union, ShouldResemble, []string{"Reply", "Handoff"})
+		})
+	})
+}
+
+func TestParseMapAndAttrs(t *testing.T) {
+	Convey("Given a class with a map field and attributes", t, func() {
+		f, err := Parse(`
+class Profile {
+  scores  map<string, int>
+  name    string @description("the person's full legal name") @alias("full_name")
+}`)
+
+		Convey("Then the map field parses key/elem", func() {
+			So(err, ShouldBeNil)
+			scores := f.Classes[0].Fields[0]
+			So(scores.Type.Map, ShouldBeTrue)
+			So(scores.Type.Elem, ShouldNotBeNil)
+			So(scores.Type.Elem.Name, ShouldEqual, "int")
+		})
+
+		Convey("Then attributes attach to the field", func() {
+			name := f.Classes[0].Fields[1]
+			So(name.Desc, ShouldEqual, "the person's full legal name")
+			So(name.Alias, ShouldEqual, "full_name")
+		})
+	})
+}
