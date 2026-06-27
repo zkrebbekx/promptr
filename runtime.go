@@ -64,6 +64,13 @@ type Options struct {
 	// OnCheck receives the non-fatal result of Check. A nil OnCheck disables the
 	// Check pass entirely.
 	OnCheck func(err error)
+	// ParallelTools, when set, dispatches the tool calls of a single model turn
+	// concurrently instead of one after another (results still feed back in
+	// request order). The calls within one turn are independent, so this cuts
+	// latency when the model asks for several at once. Off by default, since tool
+	// handlers that share mutable state must be goroutine-safe to opt in. Ignored
+	// by the non-tool Extract paths.
+	ParallelTools bool
 }
 
 // Option tunes the Options a generated function uses, applied after its built-in
@@ -85,6 +92,11 @@ func WithSystem(s string) Option { return func(o *Options) { o.System = s } }
 // @check constraints are evaluated into a no-op and effectively skipped; with it,
 // each non-fatal violation is delivered here while the value is still returned.
 func OnCheck(fn func(err error)) Option { return func(o *Options) { o.OnCheck = fn } }
+
+// ParallelTools enables concurrent dispatch of the tool calls within a single
+// model turn (see Options.ParallelTools). Opt in only when the tool handlers are
+// goroutine-safe.
+func ParallelTools() Option { return func(o *Options) { o.ParallelTools = true } }
 
 // apply runs each Option against o.
 func (o *Options) apply(opts []Option) {
