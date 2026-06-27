@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/zkrebbekx/promptr/compare/v0.13.0...v0.14.0) (2026-06-27)
+
+
+### Features
+
+* multi-agent orchestration — functions as auto-wired sub-agents ([#29](https://github.com/zkrebbekx/promptr/issues/29)) ([71f1f69](https://github.com/zkrebbekx/promptr/commit/71f1f69d7637065a210b37f65d12553a6025679c))
+
 ## [0.13.0](https://github.com/zkrebbekx/promptr/compare/v0.12.0...v0.13.0) (2026-06-27)
 
 
