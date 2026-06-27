@@ -20,12 +20,15 @@ const runtimePkg = "github.com/zkrebbekx/promptr"
 // Generate renders the whole File as a single Go source file in package pkg.
 func Generate(pkg string, f *dsl.File) ([]byte, error) {
 	desugarInlineUnions(f)
-	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}, unions: map[string]dsl.UnionDecl{}}
+	g := &gen{pkg: pkg, file: f, enums: map[string]dsl.EnumDecl{}, unions: map[string]dsl.UnionDecl{}, tools: map[string]dsl.ToolDecl{}}
 	for _, e := range f.Enums {
 		g.enums[e.Name] = e
 	}
 	for _, u := range f.Unions {
 		g.unions[u.Name] = u
+	}
+	for _, t := range f.Tools {
+		g.tools[t.Name] = t
 	}
 	src := g.render()
 	out, err := format.Source([]byte(src))
@@ -51,11 +54,14 @@ func desugarInlineUnions(f *dsl.File) {
 }
 
 type gen struct {
-	pkg     string
-	file    *dsl.File
-	enums   map[string]dsl.EnumDecl
-	unions  map[string]dsl.UnionDecl
-	usedCtx bool
+	pkg        string
+	file       *dsl.File
+	enums      map[string]dsl.EnumDecl
+	unions     map[string]dsl.UnionDecl
+	tools      map[string]dsl.ToolDecl
+	usedCtx    bool
+	usedCoerce bool // generated code references the coerce package
+	usedJSON   bool // generated code references encoding/json
 }
 
 func (g *gen) render() string {
@@ -71,6 +77,9 @@ func (g *gen) render() string {
 	}
 	for _, c := range g.file.Clients {
 		g.renderClient(&body, c)
+	}
+	for _, t := range g.file.Tools {
+		g.renderTool(&body, t)
 	}
 	for _, fn := range g.file.Funcs {
 		g.renderFunc(&body, fn)
@@ -94,8 +103,14 @@ func (g *gen) imports() []string {
 	if g.usedCtx {
 		imps = append(imps, "context")
 	}
+	if g.usedJSON {
+		imps = append(imps, "encoding/json")
+	}
 	if len(g.file.Funcs) > 0 || len(g.file.Clients) > 0 {
 		imps = append(imps, runtimePkg)
+	}
+	if g.usedCoerce {
+		imps = append(imps, runtimePkg+"/coerce")
 	}
 	return imps
 }
@@ -189,6 +204,37 @@ func clientRefs(names []string) string {
 	return strings.Join(parts, ", ")
 }
 
+// renderTool emits a tool's typed argument struct. The model's JSON arguments
+// are coerced into this struct (in the generated handler wrapper) before the
+// user's handler runs.
+func (g *gen) renderTool(b *strings.Builder, t dsl.ToolDecl) {
+	fmt.Fprintf(b, "// %sArgs are the typed arguments for the %q tool.\n", t.Name, t.Name)
+	fmt.Fprintf(b, "type %sArgs struct {\n", t.Name)
+	for _, pm := range t.Params {
+		tag := pm.Name
+		if pm.Type.Optional {
+			tag += ",omitempty"
+		}
+		fmt.Fprintf(b, "\t%s %s `json:%q`\n", goName(pm.Name), g.goType(pm.Type), tag)
+	}
+	b.WriteString("}\n\n")
+}
+
+// toolParamSchema renders the human-readable argument schema baked into the
+// tool's ToolDef, in the same style as schemaFor's class shapes.
+func (g *gen) toolParamSchema(t dsl.ToolDecl) string {
+	if len(t.Params) == 0 {
+		return "No arguments."
+	}
+	var b strings.Builder
+	b.WriteString("A JSON object with:\n{\n")
+	for _, pm := range t.Params {
+		fmt.Fprintf(&b, "  %q: %s%s\n", pm.Name, g.schemaType(pm.Type), optNote(pm.Type))
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
 func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	g.usedCtx = true
 	var partParams []dsl.Param
@@ -198,6 +244,12 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 		if isPartType(pm.Type.Name) {
 			partParams = append(partParams, pm)
 		}
+	}
+	// A tool-using function takes an extra typed handlers struct and runs the
+	// agent loop; emit that struct type first.
+	if len(fn.Tools) > 0 {
+		g.renderToolHandlers(b, fn)
+		params = append(params, "tools "+fn.Name+"Tools")
 	}
 	// elem is the coerced value type; retType wraps it in a channel when streaming.
 	elem := g.goType(fn.Ret)
@@ -223,6 +275,8 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 
 	opts := renderOptions(partParams)
 	switch {
+	case len(fn.Tools) > 0:
+		g.renderToolCall(b, fn, elem, opts)
 	case g.isUnion(fn.Ret.Name):
 		u := g.unions[fn.Ret.Name]
 		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, %s, promptr.NewUnion(%s))\n}\n\n", elem, opts, unionSamples(u))
@@ -231,6 +285,49 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	default:
 		fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, %s)\n}\n\n", elem, opts)
 	}
+}
+
+// renderToolHandlers emits the `<Func>Tools` struct of typed handler funcs the
+// caller supplies — one field per tool the function may call.
+func (g *gen) renderToolHandlers(b *strings.Builder, fn dsl.FuncDecl) {
+	fmt.Fprintf(b, "// %sTools holds the Go implementations of the tools %s may call.\n", fn.Name, fn.Name)
+	fmt.Fprintf(b, "type %sTools struct {\n", fn.Name)
+	for _, name := range fn.Tools {
+		t, ok := g.tools[name]
+		if !ok {
+			continue // validated separately; skip so codegen still produces output
+		}
+		fmt.Fprintf(b, "\t%s func(context.Context, %sArgs) (%s, error)\n", name, name, g.goType(t.Ret))
+	}
+	b.WriteString("}\n\n")
+}
+
+// renderToolCall emits the []promptr.Tool literal (wrapping each typed handler)
+// and the RunTools call that drives the agent loop.
+func (g *gen) renderToolCall(b *strings.Builder, fn dsl.FuncDecl, elem, opts string) {
+	g.usedCoerce = true
+	g.usedJSON = true
+	b.WriteString("\treturn promptr.RunTools[" + elem + "](ctx, p, prompt, []promptr.Tool{\n")
+	for _, name := range fn.Tools {
+		t, ok := g.tools[name]
+		if !ok {
+			continue
+		}
+		b.WriteString("\t\t{\n")
+		fmt.Fprintf(b, "\t\t\tDef: promptr.ToolDef{Name: %q, Description: %q, Params: %s},\n",
+			t.Name, t.Description, quote(g.toolParamSchema(t)))
+		b.WriteString("\t\t\tInvoke: func(ctx context.Context, argsJSON string) (string, error) {\n")
+		fmt.Fprintf(b, "\t\t\t\targs, err := coerce.Into[%sArgs](argsJSON)\n", name)
+		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+		fmt.Fprintf(b, "\t\t\t\tresult, err := tools.%s(ctx, args)\n", name)
+		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+		b.WriteString("\t\t\t\tout, err := json.Marshal(result)\n")
+		b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
+		b.WriteString("\t\t\t\treturn string(out), nil\n")
+		b.WriteString("\t\t\t},\n")
+		b.WriteString("\t\t},\n")
+	}
+	fmt.Fprintf(b, "\t}, %s)\n}\n\n", opts)
 }
 
 func (g *gen) isUnion(name string) bool {

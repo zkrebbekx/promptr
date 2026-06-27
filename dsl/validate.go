@@ -25,11 +25,13 @@ func Validate(f *File) []Diagnostic {
 		enums:   map[string]bool{},
 		unions:  map[string]bool{},
 		clients: map[string]bool{},
+		tools:   map[string]bool{},
 		funcs:   map[string]bool{},
 	}
 	v.collect(f)
 	v.checkUnions(f)
 	v.checkClients(f)
+	v.checkTools(f)
 	v.checkFuncs(f)
 	v.checkTests(f)
 
@@ -42,6 +44,7 @@ type validator struct {
 	enums   map[string]bool
 	unions  map[string]bool
 	clients map[string]bool
+	tools   map[string]bool
 	funcs   map[string]bool
 	diags   []Diagnostic
 }
@@ -57,7 +60,7 @@ func (v *validator) isType(name string) bool {
 
 func (v *validator) collect(f *File) {
 	mark := func(m map[string]bool, name string, line int, kind string) {
-		if v.classes[name] || v.enums[name] || v.unions[name] || v.clients[name] || v.funcs[name] {
+		if v.classes[name] || v.enums[name] || v.unions[name] || v.clients[name] || v.tools[name] || v.funcs[name] {
 			v.addf(line, "duplicate declaration %q", name)
 		}
 		m[name] = true
@@ -75,8 +78,21 @@ func (v *validator) collect(f *File) {
 	for _, d := range f.Clients {
 		mark(v.clients, d.Name, d.Line, "client")
 	}
+	for _, d := range f.Tools {
+		mark(v.tools, d.Name, d.Line, "tool")
+	}
 	for _, d := range f.Funcs {
 		mark(v.funcs, d.Name, d.Line, "function")
+	}
+}
+
+// checkTools validates each tool's parameter and return types resolve.
+func (v *validator) checkTools(f *File) {
+	for _, t := range f.Tools {
+		v.checkTypeRef(t.Line, "tool "+t.Name, t.Ret)
+		for _, pm := range t.Params {
+			v.checkTypeRef(t.Line, "tool "+t.Name, pm.Type)
+		}
 	}
 }
 
@@ -112,6 +128,11 @@ func (v *validator) checkFuncs(f *File) {
 		for _, variant := range fn.Ret.Union {
 			if !v.classes[variant] {
 				v.addf(fn.Line, "function %q inline-union variant %q is not a declared class", fn.Name, variant)
+			}
+		}
+		for _, ref := range fn.Tools {
+			if !v.tools[ref] {
+				v.addf(fn.Line, "function %q uses unknown tool %q", fn.Name, ref)
 			}
 		}
 		v.checkTypeRef(fn.Line, fn.Name, fn.Ret)

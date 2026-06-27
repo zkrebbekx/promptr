@@ -2,6 +2,7 @@ package promptr
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -77,6 +78,47 @@ func (c *Collector) Collect(p Provider) Provider {
 		c.mu.Unlock()
 		return reply, err
 	})
+}
+
+// CollectTools wraps a ToolProvider so each CompleteTools call is recorded into
+// c on the same latency/usage path as Collect. The returned Provider also
+// implements ToolProvider, so it can be passed straight to RunTools while
+// staying observable.
+func (c *Collector) CollectTools(p ToolProvider) Provider {
+	return &toolCollector{c: c, inner: p}
+}
+
+type toolCollector struct {
+	c     *Collector
+	inner ToolProvider
+}
+
+// Complete delegates to the wrapped provider's Complete when it has one, so the
+// collector is usable as a plain Provider too.
+func (t *toolCollector) Complete(ctx context.Context, messages []Message) (string, error) {
+	if p, ok := t.inner.(Provider); ok {
+		return p.Complete(ctx, messages)
+	}
+	return "", fmt.Errorf("promptr: wrapped tool provider does not implement Complete")
+}
+
+func (t *toolCollector) CompleteTools(ctx context.Context, messages []Message, tools []ToolDef) (Reply, error) {
+	start := time.Now()
+	reply, err := t.inner.CompleteTools(ctx, messages, tools)
+	call := Call{Start: start, Duration: time.Since(start), Err: err}
+
+	if u, ok := t.inner.(UsageReporter); ok {
+		call.PromptTokens, call.ReplyTokens = u.LastUsage()
+	} else {
+		call.PromptTokens = estimateTokens(messages)
+		call.ReplyTokens = estimateChars(len(reply.Text))
+		call.Estimated = true
+	}
+
+	t.c.mu.Lock()
+	t.c.calls = append(t.c.calls, call)
+	t.c.mu.Unlock()
+	return reply, err
 }
 
 // Calls returns a snapshot copy of every recorded call.

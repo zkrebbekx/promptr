@@ -51,11 +51,34 @@ func New(apiKey, model string) *Client {
 }
 
 type reqBody struct {
-	Model     string   `json:"model"`
-	MaxTokens int      `json:"max_tokens"`
-	System    string   `json:"system,omitempty"`
-	Stream    bool     `json:"stream,omitempty"`
-	Messages  []apiMsg `json:"messages"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"`
+	Stream    bool            `json:"stream,omitempty"`
+	Tools     []anthropicTool `json:"tools,omitempty"`
+	Messages  []apiMsg        `json:"messages"`
+}
+
+// anthropicTool is one entry in the request's `tools` array. input_schema is a
+// JSON Schema object; we pass a permissive object schema carrying the
+// human-readable parameter description, and let the coerce kernel parse whatever
+// arguments come back.
+type anthropicTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
+func toAnthropicTools(defs []promptr.ToolDef) []anthropicTool {
+	out := make([]anthropicTool, len(defs))
+	for i, d := range defs {
+		out[i] = anthropicTool{
+			Name:        d.Name,
+			Description: d.Description,
+			InputSchema: map[string]any{"type": "object", "description": d.Params},
+		}
+	}
+	return out
 }
 
 // apiMsg.Content is `any`: a plain string for the text-only fast path, or an
@@ -71,17 +94,41 @@ func splitSystem(messages []promptr.Message) (string, []apiMsg) {
 	var systems []string
 	out := make([]apiMsg, 0, len(messages))
 	for _, m := range messages {
-		if m.Role == "system" {
+		switch {
+		case m.Role == "system":
 			systems = append(systems, m.Content)
-			continue
-		}
-		if len(m.Parts) == 0 {
+		case len(m.ToolCalls) > 0:
+			// The assistant turn that requested tools must be echoed back as
+			// tool_use content blocks.
+			out = append(out, apiMsg{Role: "assistant", Content: toolUseBlocks(m.ToolCalls)})
+		case m.ToolCallID != "":
+			// A tool result is sent as a user turn carrying a tool_result block.
+			out = append(out, apiMsg{Role: "user", Content: []map[string]any{{
+				"type":        "tool_result",
+				"tool_use_id": m.ToolCallID,
+				"content":     m.Content,
+			}}})
+		case len(m.Parts) == 0:
 			out = append(out, apiMsg{Role: m.Role, Content: m.Content})
-			continue
+		default:
+			out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
 		}
-		out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
 	}
 	return strings.Join(systems, "\n\n"), out
+}
+
+// toolUseBlocks maps requested tool calls to Anthropic tool_use content blocks.
+// The raw JSON arguments are embedded as the block's `input` object.
+func toolUseBlocks(calls []promptr.ToolCall) []map[string]any {
+	out := make([]map[string]any, len(calls))
+	for i, c := range calls {
+		var input any = map[string]any{}
+		if strings.TrimSpace(c.Arguments) != "" {
+			input = json.RawMessage(c.Arguments)
+		}
+		out[i] = map[string]any{"type": "tool_use", "id": c.ID, "name": c.Name, "input": input}
+	}
+	return out
 }
 
 // contentParts maps promptr parts to Anthropic content blocks.
@@ -116,8 +163,11 @@ func imageSource(p promptr.Part) map[string]any {
 
 type respBody struct {
 	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		ID    string          `json:"id"`    // tool_use block id
+		Name  string          `json:"name"`  // tool_use block name
+		Input json.RawMessage `json:"input"` // tool_use block arguments
 	} `json:"content"`
 	Error *struct {
 		Type    string `json:"type"`
@@ -175,6 +225,65 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 		}
 	}
 	return sb.String(), nil
+}
+
+// CompleteTools sends the conversation plus the available tools and returns
+// either the model's final text or the tool_use calls it requested. It
+// implements promptr.ToolProvider; the runtime's agent loop drives dispatch.
+func (c *Client) CompleteTools(ctx context.Context, messages []promptr.Message, tools []promptr.ToolDef) (promptr.Reply, error) {
+	if c.APIKey == "" {
+		return promptr.Reply{}, fmt.Errorf("anthropic: empty API key")
+	}
+	body := reqBody{Model: c.Model, MaxTokens: c.maxTokens(), Tools: toAnthropicTools(tools)}
+	body.System, body.Messages = splitSystem(messages)
+
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/messages", bytes.NewReader(buf))
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", c.version())
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return promptr.Reply{}, err
+	}
+
+	var out respBody
+	if jerr := json.Unmarshal(raw, &out); jerr != nil {
+		return promptr.Reply{}, fmt.Errorf("anthropic: decode response (%s): %w", resp.Status, jerr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if out.Error != nil {
+			return promptr.Reply{}, fmt.Errorf("anthropic: %s: %s", resp.Status, out.Error.Message)
+		}
+		return promptr.Reply{}, fmt.Errorf("anthropic: %s", resp.Status)
+	}
+
+	var sb strings.Builder
+	var calls []promptr.ToolCall
+	for _, block := range out.Content {
+		switch block.Type {
+		case "text":
+			sb.WriteString(block.Text)
+		case "tool_use":
+			calls = append(calls, promptr.ToolCall{ID: block.ID, Name: block.Name, Arguments: string(block.Input)})
+		}
+	}
+	if len(calls) > 0 {
+		return promptr.Reply{Calls: calls}, nil
+	}
+	return promptr.Reply{Text: sb.String()}, nil
 }
 
 // streamEvent is one decoded SSE `data:` payload from the Messages stream. We
@@ -277,8 +386,9 @@ func (c *Client) httpClient() *http.Client {
 	return c.HTTP
 }
 
-// static assertions: Client satisfies both runtime contracts.
+// static assertions: Client satisfies all three runtime contracts.
 var (
 	_ promptr.Provider       = (*Client)(nil)
 	_ promptr.StreamProvider = (*Client)(nil)
+	_ promptr.ToolProvider   = (*Client)(nil)
 )

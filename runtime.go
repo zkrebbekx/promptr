@@ -23,6 +23,12 @@ type Message struct {
 	// Providers that support multimodal input map Parts to their content array;
 	// otherwise Content is used. Text-only callers leave Parts nil.
 	Parts []Part
+	// ToolCalls, on an "assistant" turn, are the tool invocations the model
+	// requested (see ToolProvider). ToolCallID, on a "tool" turn, correlates a
+	// tool result back to the call that produced it. Both are zero for ordinary
+	// text turns, so non-tool callers are unaffected.
+	ToolCalls  []ToolCall
+	ToolCallID string
 }
 
 // Provider is the single seam between promptr and a language model. Implement it
@@ -42,6 +48,10 @@ type Options struct {
 	// UserParts, when non-empty, makes the user turn multimodal: the rendered
 	// prompt becomes the leading text Part, followed by these (images, files…).
 	UserParts []Part
+	// MaxSteps bounds the tool-calling agent loop (default 8): the most
+	// model⇄tool round-trips RunTools will take before giving up. Ignored by the
+	// non-tool Extract paths.
+	MaxSteps int
 }
 
 // userMessage builds the user turn for prompt, attaching any multimodal parts.
@@ -60,6 +70,13 @@ func (o Options) attempts() int {
 		return 2
 	}
 	return o.Attempts
+}
+
+func (o Options) maxSteps() int {
+	if o.MaxSteps <= 0 {
+		return 8
+	}
+	return o.MaxSteps
 }
 
 // Extract runs prompt against the provider and coerces the reply into T. If the

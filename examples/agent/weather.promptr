@@ -1,0 +1,38 @@
+// A trip planner that calls tools, then returns a typed itinerary.
+
+class Weather {
+  city       string
+  conditions string
+  high_c     int
+}
+
+class Flight {
+  carrier string
+  price   int
+}
+
+class Itinerary {
+  destination string
+  summary     string
+  packing     string[]
+}
+
+client Smart { provider "anthropic" model "claude-opus-4-8" }
+
+tool GetWeather(city: string) -> Weather {
+  description "Look up the current weather for a city."
+}
+
+tool SearchFlights(from: string, to: string) -> Flight[] {
+  description "Find available flights between two cities."
+}
+
+function PlanTrip(goal: string) -> Itinerary {
+  client Smart
+  tools [GetWeather, SearchFlights]
+  prompt #"
+    Plan a trip for this goal, using the tools to check weather and flights.
+    {{ ctx.output_schema }}
+    Goal: {{ goal }}
+  "#
+}

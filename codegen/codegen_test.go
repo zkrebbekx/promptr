@@ -218,6 +218,48 @@ class Profile {
 	})
 }
 
+func TestGenerateTools(t *testing.T) {
+	Convey("Given a tool-using function", t, func() {
+		code := generate(t, `
+class Weather { city string  high_c int }
+class Plan { summary string }
+
+tool GetWeather(city: string) -> Weather {
+  description "Look up the weather."
+}
+
+function MakePlan(goal: string) -> Plan {
+  client C
+  tools [GetWeather]
+  prompt #"Plan it. {{ ctx.output_schema }} Goal: {{ goal }}"#
+}`)
+
+		Convey("Then a typed args struct is emitted for the tool", func() {
+			So(code, ShouldContainSubstring, "type GetWeatherArgs struct {")
+			So(code, ShouldContainSubstring, "City string `json:\"city\"`")
+		})
+
+		Convey("Then a handlers struct carries a typed func field", func() {
+			So(code, ShouldContainSubstring, "type MakePlanTools struct {")
+			So(code, ShouldContainSubstring, "GetWeather func(context.Context, GetWeatherArgs) (Weather, error)")
+		})
+
+		Convey("Then the function takes the handlers and runs RunTools", func() {
+			So(code, ShouldContainSubstring, "tools MakePlanTools")
+			So(code, ShouldContainSubstring, "promptr.RunTools[Plan](ctx, p, prompt, []promptr.Tool{")
+			So(code, ShouldContainSubstring, "coerce.Into[GetWeatherArgs](argsJSON)")
+			So(code, ShouldContainSubstring, "json.Marshal(result)")
+		})
+
+		Convey("Then it imports coerce and encoding/json and is valid Go", func() {
+			So(code, ShouldContainSubstring, `"encoding/json"`)
+			So(code, ShouldContainSubstring, `"github.com/zkrebbekx/promptr/coerce"`)
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
+		})
+	})
+}
+
 func TestGenerateStreamAndMultimodal(t *testing.T) {
 	Convey("Given a streaming function with an image param", t, func() {
 		code := generate(t, `

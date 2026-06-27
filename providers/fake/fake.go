@@ -19,12 +19,25 @@ type Provider struct {
 	Calls     [][]promptr.Message
 	ChunkSize int // bytes per streamed chunk (default 8); see Stream
 	n         int
+	// ToolReplies scripts CompleteTools: one Reply per call, in order, so an
+	// agent loop (model → tool → model → final) can be driven deterministically.
+	ToolReplies []Reply
+	tn          int
 }
 
-// static assertions: Provider satisfies both runtime contracts.
+// Reply is one scripted turn for CompleteTools: either tool Calls the model
+// "requests", or a final Text answer. Script a slice of these on a Provider to
+// exercise RunTools without a network.
+type Reply struct {
+	Text  string
+	Calls []promptr.ToolCall
+}
+
+// static assertions: Provider satisfies all three runtime contracts.
 var (
 	_ promptr.Provider       = (*Provider)(nil)
 	_ promptr.StreamProvider = (*Provider)(nil)
+	_ promptr.ToolProvider   = (*Provider)(nil)
 )
 
 // New builds a Provider scripted with the given replies.
@@ -34,6 +47,22 @@ func New(replies ...string) *Provider { return &Provider{Replies: replies} }
 func (p *Provider) Complete(_ context.Context, msgs []promptr.Message) (string, error) {
 	p.Calls = append(p.Calls, msgs)
 	return p.nextReply()
+}
+
+// CompleteTools returns the next scripted Reply. After the last entry it
+// keeps returning that final one. Every message slice is recorded in Calls.
+func (p *Provider) CompleteTools(_ context.Context, msgs []promptr.Message, _ []promptr.ToolDef) (promptr.Reply, error) {
+	p.Calls = append(p.Calls, msgs)
+	if len(p.ToolReplies) == 0 {
+		return promptr.Reply{}, fmt.Errorf("fake: no scripted tool replies")
+	}
+	i := p.tn
+	if i >= len(p.ToolReplies) {
+		i = len(p.ToolReplies) - 1
+	}
+	p.tn++
+	r := p.ToolReplies[i]
+	return promptr.Reply{Text: r.Text, Calls: r.Calls}, nil
 }
 
 func (p *Provider) nextReply() (string, error) {
