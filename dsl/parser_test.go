@@ -179,3 +179,41 @@ func TestParseUnterminatedRawStringDoesNotHang(t *testing.T) {
 		})
 	})
 }
+
+func TestParseClientPolicies(t *testing.T) {
+	Convey("Given clients with retry, fallback and round_robin policies", t, func() {
+		src := `
+client Fast { provider "openai" model "gpt-4o-mini" }
+client Smart { provider "anthropic" model "claude-opus-4-8" }
+client Reliable {
+  fallback [Smart, Fast]
+  retry 3
+}
+client Spread { round_robin [Fast, Smart] }
+`
+		f, err := Parse(src)
+
+		Convey("Then parsing succeeds with all four clients", func() {
+			So(err, ShouldBeNil)
+			So(f.Clients, ShouldHaveLength, 4)
+		})
+
+		Convey("Then a plain client keeps its provider/model and empty policy", func() {
+			So(f.Clients[0].Name, ShouldEqual, "Fast")
+			So(f.Clients[0].Provider, ShouldEqual, "openai")
+			So(f.Clients[0].Model, ShouldEqual, "gpt-4o-mini")
+			So(f.Clients[0].Policy.Fallback, ShouldBeEmpty)
+		})
+
+		Convey("Then the fallback+retry client records both", func() {
+			rel := f.Clients[2]
+			So(rel.Name, ShouldEqual, "Reliable")
+			So(rel.Policy.Fallback, ShouldResemble, []string{"Smart", "Fast"})
+			So(rel.Policy.Retry, ShouldEqual, 3)
+		})
+
+		Convey("Then the round_robin client records its members", func() {
+			So(f.Clients[3].Policy.RoundRobin, ShouldResemble, []string{"Fast", "Smart"})
+		})
+	})
+}

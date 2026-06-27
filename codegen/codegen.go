@@ -35,7 +35,6 @@ type gen struct {
 	pkg     string
 	file    *dsl.File
 	enums   map[string]dsl.EnumDecl
-	usedFmt bool
 	usedCtx bool
 }
 
@@ -46,6 +45,9 @@ func (g *gen) render() string {
 	}
 	for _, c := range g.file.Classes {
 		g.renderClass(&body, c)
+	}
+	for _, c := range g.file.Clients {
+		g.renderClient(&body, c)
 	}
 	for _, fn := range g.file.Funcs {
 		g.renderFunc(&body, fn)
@@ -69,10 +71,7 @@ func (g *gen) imports() []string {
 	if g.usedCtx {
 		imps = append(imps, "context")
 	}
-	if g.usedFmt {
-		imps = append(imps, "fmt")
-	}
-	if len(g.file.Funcs) > 0 {
+	if len(g.file.Funcs) > 0 || len(g.file.Clients) > 0 {
 		imps = append(imps, runtimePkg)
 	}
 	return imps
@@ -110,60 +109,56 @@ func (g *gen) renderClass(b *strings.Builder, c dsl.ClassDecl) {
 	b.WriteString("}\n\n")
 }
 
+// renderClient emits a constructor that resolves a declared client (and its
+// reliability policy) from a promptr.Registry. A plain client is just a lookup;
+// a policy client wraps the clients it references with Fallback/RoundRobin/Retry
+// — composing the wrappers from policy.go.
+func (g *gen) renderClient(b *strings.Builder, c dsl.ClientDecl) {
+	expr := g.clientBase(c)
+	if c.Policy.Retry > 0 {
+		expr = fmt.Sprintf("promptr.Retry(%s, %d, 0)", expr, c.Policy.Retry)
+	}
+	fmt.Fprintf(b, "// Client%s resolves the %q client (with any declared policy) from reg.\n", c.Name, c.Name)
+	fmt.Fprintf(b, "func Client%s(reg promptr.Registry) promptr.Provider {\n\treturn %s\n}\n\n", c.Name, expr)
+}
+
+func (g *gen) clientBase(c dsl.ClientDecl) string {
+	switch {
+	case len(c.Policy.Fallback) > 0:
+		return "promptr.Fallback(" + clientRefs(c.Policy.Fallback) + ")"
+	case len(c.Policy.RoundRobin) > 0:
+		return "promptr.RoundRobin(" + clientRefs(c.Policy.RoundRobin) + ")"
+	default:
+		return fmt.Sprintf("reg.Get(%q)", c.Name)
+	}
+}
+
+func clientRefs(names []string) string {
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = "Client" + n + "(reg)"
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	g.usedCtx = true
 	params := []string{"ctx context.Context", "p promptr.Provider"}
-	holes := map[string]bool{}
 	for _, pm := range fn.Params {
 		params = append(params, fmt.Sprintf("%s %s", pm.Name, g.goType(pm.Type)))
-		holes[pm.Name] = true
 	}
 	ret := g.goType(fn.Ret)
 	fmt.Fprintf(b, "func %s(%s) (%s, error) {\n", fn.Name, strings.Join(params, ", "), ret)
-	fmt.Fprintf(b, "\tprompt := %s\n", g.renderPrompt(fn.Prompt, holes, fn.Ret))
+	// Render the prompt at runtime so it can use control flow; the output-schema
+	// description is still computed at compile time and injected via ctx.
+	fmt.Fprintf(b, "\tprompt, err := promptr.Render(%s, map[string]any{\n", quote(fn.Prompt))
+	for _, pm := range fn.Params {
+		fmt.Fprintf(b, "\t\t%q: %s,\n", pm.Name, pm.Name)
+	}
+	fmt.Fprintf(b, "\t\t\"ctx\": map[string]any{\"output_schema\": %s},\n", quote(g.schemaFor(fn.Ret)))
+	b.WriteString("\t})\n")
+	fmt.Fprintf(b, "\tif err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n", ret)
 	fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, promptr.Options{Attempts: 2})\n}\n\n", ret)
-}
-
-// renderPrompt compiles a template body into a Go string-building expression.
-// {{ ctx.output_schema }} is replaced with a baked schema literal for the return
-// type; {{ param }} holes become fmt.Sprint(param); unknown holes are kept
-// verbatim as literal text.
-func (g *gen) renderPrompt(tmpl string, holes map[string]bool, ret dsl.TypeRef) string {
-	var parts []string
-	rest := tmpl
-	for {
-		open := strings.Index(rest, "{{")
-		if open < 0 {
-			if rest != "" {
-				parts = append(parts, quote(rest))
-			}
-			break
-		}
-		if open > 0 {
-			parts = append(parts, quote(rest[:open]))
-		}
-		end := strings.Index(rest[open:], "}}")
-		if end < 0 {
-			// no closing braces — treat remainder as literal
-			parts = append(parts, quote(rest))
-			break
-		}
-		inner := strings.TrimSpace(rest[open+2 : open+end])
-		switch {
-		case inner == "ctx.output_schema":
-			parts = append(parts, quote(g.schemaFor(ret)))
-		case holes[inner]:
-			g.usedFmt = true
-			parts = append(parts, "fmt.Sprint("+inner+")")
-		default:
-			parts = append(parts, quote(rest[open:open+end+2]))
-		}
-		rest = rest[open+end+2:]
-	}
-	if len(parts) == 0 {
-		return `""`
-	}
-	return strings.Join(parts, " + ")
 }
 
 // schemaFor produces the human-readable schema description embedded in the

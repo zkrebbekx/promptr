@@ -71,13 +71,20 @@ func TestGenerate(t *testing.T) {
 			So(code, ShouldContainSubstring, "promptr.Extract[Ticket](ctx, p, prompt,")
 		})
 
-		Convey("Then the output schema is baked into the prompt", func() {
+		Convey("Then the prompt is rendered at runtime with params + ctx schema", func() {
+			So(code, ShouldContainSubstring, "promptr.Render(")
+			So(code, ShouldContainSubstring, `"text": text,`)
+			So(code, ShouldContainSubstring, `"ctx": map[string]any{"output_schema":`)
+		})
+
+		Convey("Then the output schema is baked into the injected ctx", func() {
 			So(code, ShouldContainSubstring, "Answer with a JSON object")
 			So(code, ShouldContainSubstring, "one of [LOW, HIGH, CRITICAL]")
 		})
 
-		Convey("Then the param hole becomes a runtime fmt.Sprint", func() {
-			So(code, ShouldContainSubstring, "fmt.Sprint(text)")
+		Convey("Then each client gets a registry-resolving constructor", func() {
+			So(code, ShouldContainSubstring, "func ClientGPT4o(reg promptr.Registry) promptr.Provider")
+			So(code, ShouldContainSubstring, `reg.Get("GPT4o")`)
 		})
 
 		Convey("Then it is gofmt-clean (no double-formatting changes)", func() {
@@ -107,6 +114,32 @@ func TestGenerateScalarReturn(t *testing.T) {
 		Convey("Then the return type is the Go scalar and schema is the scalar form", func() {
 			So(code, ShouldContainSubstring, "(bool, error)")
 			So(code, ShouldContainSubstring, "Answer with a single bool value.")
+		})
+	})
+}
+
+func TestGenerateClientPolicies(t *testing.T) {
+	Convey("Given clients composed with fallback and retry", t, func() {
+		code := generate(t, `
+client Fast { provider "openai" model "gpt-4o-mini" }
+client Smart { provider "anthropic" model "claude-opus-4-8" }
+client Reliable {
+  fallback [Smart, Fast]
+  retry 3
+}`)
+
+		Convey("Then plain clients become registry lookups", func() {
+			So(code, ShouldContainSubstring, "func ClientFast(reg promptr.Registry) promptr.Provider")
+			So(code, ShouldContainSubstring, `reg.Get("Fast")`)
+		})
+
+		Convey("Then the policy client wraps referenced clients with Fallback+Retry", func() {
+			So(code, ShouldContainSubstring, "promptr.Retry(promptr.Fallback(ClientSmart(reg), ClientFast(reg)), 3, 0)")
+		})
+
+		Convey("Then the generated code is valid Go", func() {
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
 		})
 	})
 }

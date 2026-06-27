@@ -49,13 +49,24 @@ type TypeRef struct {
 
 // ClientDecl is `client Name { provider "x" model "y" ... }` — a named binding
 // the runtime resolves to a Provider. Provider/Model are lifted out; any other
-// key/value settings are kept in Extra.
+// key/value settings are kept in Extra. A client may instead (or additionally)
+// carry a reliability Policy that composes other declared clients.
 type ClientDecl struct {
 	Name     string
 	Provider string
 	Model    string
 	Extra    map[string]string
+	Policy   Policy
 	Line     int
+}
+
+// Policy is the optional reliability wrapping on a client: retry the wrapped
+// call, fail over across other named clients, or round-robin across them.
+// Fallback and RoundRobin hold the names of other clients in this file.
+type Policy struct {
+	Retry      int
+	Fallback   []string
+	RoundRobin []string
 }
 
 // Param is one `name: Type` function parameter.

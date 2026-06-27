@@ -7,6 +7,7 @@ type tokenKind uint8
 const (
 	tEOF tokenKind = iota
 	tIdent
+	tNumber    // 123
 	tString    // "double-quoted"
 	tRawString // #" raw, multi-line template "#
 	tLBrace
@@ -53,6 +54,8 @@ func (l *lexer) next() token {
 		return l.scanString()
 	case isIdentStart(c):
 		return l.scanIdent()
+	case c >= '0' && c <= '9':
+		return l.scanNumber()
 	case c == '-' && l.pos+1 < len(l.src) && l.src[l.pos+1] == '>':
 		l.pos += 2
 		return token{tArrow, "->", start, line}
@@ -115,6 +118,14 @@ func (l *lexer) scanIdent() token {
 		l.pos++
 	}
 	return token{tIdent, l.src[start:l.pos], start, line}
+}
+
+func (l *lexer) scanNumber() token {
+	start, line := l.pos, l.line
+	for l.pos < len(l.src) && l.src[l.pos] >= '0' && l.src[l.pos] <= '9' {
+		l.pos++
+	}
+	return token{tNumber, l.src[start:l.pos], start, line}
 }
 
 func (l *lexer) scanString() token {

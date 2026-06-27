@@ -4,7 +4,6 @@ package ticket
 
 import (
 	"context"
-	"fmt"
 	"github.com/zkrebbekx/promptr"
 )
 
@@ -28,17 +27,29 @@ type Ticket struct {
 	DueDays  *int     `json:"due_days,omitempty"`
 }
 
+// ClientDefault resolves the "Default" client (with any declared policy) from reg.
+func ClientDefault(reg promptr.Registry) promptr.Provider {
+	return reg.Get("Default")
+}
+
 func ExtractTicket(ctx context.Context, p promptr.Provider, text string) (Ticket, error) {
-	prompt := `
+	prompt, err := promptr.Render(`
     Extract a support ticket from the user's message.
-    ` + `Answer with a JSON object of exactly this shape:
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  `, map[string]any{
+		"text": text,
+		"ctx": map[string]any{"output_schema": `Answer with a JSON object of exactly this shape:
 {
   "title": string
   "severity": one of [LOW, HIGH, CRITICAL]
   "tags": string[]
   "due_days": int (optional)
-}` + `
-    Message: ` + fmt.Sprint(text) + `
-  `
+}`},
+	})
+	if err != nil {
+		var zero Ticket
+		return zero, err
+	}
 	return promptr.Extract[Ticket](ctx, p, prompt, promptr.Options{Attempts: 2})
 }

@@ -111,6 +111,30 @@ for p := range coerce.Stream[Ticket](tokenChan) {
 }
 ```
 
+## Prompt templates
+
+Prompts are more than string interpolation — the template engine supports
+control flow over your runtime values, so one function adapts its prompt to the
+input:
+
+```promptr
+prompt #"
+  Extract a support ticket.
+  {{ if examples }}Here are examples of good tickets:
+  {{ for e in examples }}- {{ e }}
+  {{ end }}{{ end }}
+  {{ ctx.output_schema }}
+  Message: {{ text }}
+"#
+```
+
+Supported inside `{{ }}`: `{{ var }}` (with dotted paths `{{ user.name }}`),
+`{{ if cond }}…{{ else }}…{{ end }}` (truthiness, `not`, and `== "lit"` /
+`!= "lit"`), `{{ for x in items }}…{{ end }}`, and the compiler-injected
+`{{ ctx.output_schema }}`. Unknown names render empty rather than erroring, so a
+prompt never panics on real model context. The engine (`promptr.Render`) is
+usable directly, too.
+
 ## Providers
 
 The core imports no LLM SDK. A `Provider` is one method:
@@ -121,11 +145,39 @@ type Provider interface {
 }
 ```
 
-- `providers/fake` — deterministic scripted replies for tests and the playground.
-- `providers/anthropic` — a real adapter over the Anthropic Messages API, built
-  on `net/http` alone. Import it only if you want it.
+| Package | Backend |
+| --- | --- |
+| `providers/openai` | OpenAI Chat Completions — **and anything compatible**: Azure OpenAI, Groq, Together, OpenRouter, llama.cpp/vLLM/LM Studio (just set `BaseURL`) |
+| `providers/anthropic` | Anthropic Messages API |
+| `providers/gemini` | Google Gemini (Generative Language API) |
+| `providers/ollama` | Local models via Ollama |
+| `providers/fake` | Deterministic scripted replies for tests and the playground |
 
-Wiring any other model is a dozen lines of `net/http`.
+Each is `net/http` only — import just the one you use. Wiring any other model is
+a dozen lines.
+
+### Client reliability policies
+
+Declare retry/fallback/round-robin in the DSL; the compiler generates
+registry-resolving constructors that wrap your wired providers:
+
+```promptr
+client Fast  { provider "openai"    model "gpt-4o-mini" }
+client Smart { provider "anthropic" model "claude-opus-4-8" }
+client Reliable {
+  fallback [Smart, Fast]   // try Smart, fall over to Fast
+  retry 3                  // each up to 3 times on transient error
+}
+```
+
+```go
+reg := promptr.Registry{"Smart": anthropicClient, "Fast": openaiClient}
+provider := ClientReliable(reg) // promptr.Retry(promptr.Fallback(...), 3, 0)
+ticket, err := ExtractTicket(ctx, provider, msg)
+```
+
+`promptr.Retry`, `promptr.Fallback`, and `promptr.RoundRobin` are also usable
+directly — each is just a `Provider` that wraps other `Provider`s.
 
 ## Install
 
