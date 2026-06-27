@@ -99,4 +99,57 @@ function F(g: string) -> string {
 			So(msgs, ShouldContain, `tool Bad refers to unknown type "Ghost"`)
 		})
 	})
+
+	Convey("Given a test whose expect matches the returned class", t, func() {
+		f, err := Parse(`enum Sev { LOW HIGH }
+class Ticket { title string sev Sev open bool votes int }
+client C { provider "fake" model "x" }
+function ExtractTicket(text: string) -> Ticket { client C prompt #"{{ text }}"# }
+test ok {
+  function ExtractTicket
+  args { text "hi" }
+  expect { title "X" sev HIGH open true votes 2 }
+}`)
+		So(err, ShouldBeNil)
+		Convey("Then Validate reports no diagnostics", func() {
+			So(Validate(f), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given an expect with an unknown field, a type mismatch and a bad enum member", t, func() {
+		f, _ := Parse(`enum Sev { LOW HIGH }
+class Ticket { title string sev Sev votes int }
+client C { provider "fake" model "x" }
+function ExtractTicket(text: string) -> Ticket { client C prompt #"{{ text }}"# }
+test bad {
+  function ExtractTicket
+  args { text "hi" }
+  expect { ghost "x" votes "three" sev MEDIUM }
+}`)
+		msgs := diagMsgs(f)
+		Convey("Then each problem is flagged", func() {
+			So(msgs, ShouldContain, `test "bad" expects field "ghost", not a field of "Ticket"`)
+			So(msgs, ShouldContain, `test "bad" field "votes" expects a int, got "three"`)
+			So(msgs, ShouldContain, `test "bad" field "sev" expects a Sev member, got "MEDIUM"`)
+		})
+	})
+
+	Convey("Given an expect on a function that does not return a class", t, func() {
+		f, _ := Parse(`client C { provider "fake" model "x" }
+function Greet(name: string) -> string { client C prompt #"{{ name }}"# }
+test t { function Greet args { name "Zac" } expect { x "y" } }`)
+		Convey("Then it is flagged as not assertable", func() {
+			So(diagMsgs(f), ShouldContain, `test "t" has expect, but "Greet" does not return a class`)
+		})
+	})
+
+	Convey("Given a test targeting a streaming function", t, func() {
+		f, _ := Parse(`class S { headline string }
+client C { provider "fake" model "x" }
+function Sum(text: string) -> stream S { client C prompt #"{{ text }}"# }
+test t { function Sum args { text "hi" } }`)
+		Convey("Then the streaming target is rejected", func() {
+			So(diagMsgs(f), ShouldContain, `test "t" cannot target streaming function "Sum"`)
+		})
+	})
 }

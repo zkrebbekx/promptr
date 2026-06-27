@@ -193,19 +193,61 @@ func (p *printer) test(t TestDecl) {
 	if t.Func != "" {
 		p.emit(0, "  function "+t.Func)
 	}
-	if len(t.Args) > 0 {
-		p.emit(0, "  args {")
-		keys := make([]string, 0, len(t.Args))
-		for k := range t.Args {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			p.emit(0, "    "+k+" "+quote(t.Args[k]))
-		}
-		p.emit(0, "  }")
-	}
+	p.kvBlock("args", t.Args)
+	p.kvBlock("expect", t.Expect)
 	p.emit(0, "}")
+}
+
+// kvBlock renders a sorted `name { key value ... }` block (used for a test's args
+// and expect maps), or nothing when the map is empty. Values are emitted
+// verbatim for numeric/bool/enum-member literals and quoted otherwise, matching
+// how the codegen typer treats them.
+func (p *printer) kvBlock(name string, kv map[string]string) {
+	if len(kv) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	keyW := 0
+	for _, k := range keys {
+		keyW = max(keyW, len(k))
+	}
+	p.emit(0, "  "+name+" {")
+	for _, k := range keys {
+		p.emit(0, "    "+pad(k, keyW)+" "+formatValue(kv[k]))
+	}
+	p.emit(0, "  }")
+}
+
+// formatValue renders a test arg/expect value: a bare number or bool keyword is
+// left unquoted (matching how it was lexed), everything else is quoted.
+func formatValue(v string) string {
+	if v == "true" || v == "false" || isNumericLit(v) {
+		return v
+	}
+	return quote(v)
+}
+
+func isNumericLit(s string) bool {
+	if s == "" {
+		return false
+	}
+	dot, digit := false, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			digit = true
+		case c == '-' && i == 0:
+		case c == '.' && !dot:
+			dot = true
+		default:
+			return false
+		}
+	}
+	return digit
 }
 
 // renderParams renders `name: Type, name: Type` for a tool/function signature.

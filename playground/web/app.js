@@ -2,7 +2,7 @@
 
 // VERSION is the promptr release this playground is built from. The WASM is
 // compiled against the tagged source, so bump this whenever a new version ships.
-const VERSION = "v0.12.0";
+const VERSION = "v0.13.0";
 
 // EXAMPLES is the clickable gallery. Each entry is a self-contained .promptr
 // snippet that showcases one capability; clicking a chip loads it into the DSL
@@ -161,6 +161,46 @@ function PlanTrip(goal: string) -> Itinerary {
 }`,
   },
   {
+    id: "livetest",
+    label: "Live tests",
+    blurb: "A test block compiles to a runnable Go test that calls the function and asserts the typed result field-by-field — see the appended _test.go below. (v0.13)",
+    dsl: `enum Severity { LOW HIGH CRITICAL }
+
+class Ticket {
+  title    string
+  severity Severity
+  open     bool
+  votes    int
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ExtractTicket(text: string) -> Ticket {
+  client Default
+  prompt #"
+    Extract a support ticket from the message.
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  "#
+}
+
+test outage {
+  function ExtractTicket
+  args {
+    text "the production server is DOWN!"
+  }
+  expect {
+    title    "Server is down"
+    severity CRITICAL
+    open     true
+    votes    3
+  }
+}`,
+  },
+  {
     id: "fmt",
     label: "Formatter (try it!)",
     blurb: "promptr fmt canonicalizes layout and preserves comments. This snippet is deliberately mis-aligned — hit Format to clean it up. (v0.12)",
@@ -191,8 +231,15 @@ function runGenerate() {
   if (!window.promptrGenerate) return;
   const r = window.promptrGenerate($("dsl").value);
   const out = $("go");
-  if (r.err) { out.textContent = r.err; out.classList.add("error"); }
-  else { out.textContent = r.go; out.classList.remove("error"); }
+  if (r.err) { out.textContent = r.err; out.classList.add("error"); return; }
+  // A `test` block also compiles to a sibling _test.go — append it so the
+  // live-test runner is visible alongside the main generated file.
+  let text = r.go;
+  if (r.tests) {
+    text += "\n// ── generated _test.go (from your test blocks) ──\n\n" + r.tests;
+  }
+  out.textContent = text;
+  out.classList.remove("error");
 }
 
 function runFormat() {

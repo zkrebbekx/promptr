@@ -304,3 +304,37 @@ function PlanTrip(goal: string) -> Itinerary {
 		})
 	})
 }
+
+func TestParseTestExpect(t *testing.T) {
+	Convey("Given a test block with an expect section and numeric/bool values", t, func() {
+		f, err := Parse(`
+client C { provider "fake" model "x" }
+function ExtractTicket(text: string) -> Ticket { client C prompt #"{{ text }}"# }
+test outage {
+  function ExtractTicket
+  args { text "down!" }
+  expect {
+    title    "Server is down"
+    severity CRITICAL
+    open     true
+    votes    3
+  }
+}`)
+		So(err, ShouldBeNil)
+		So(f.Tests, ShouldHaveLength, 1)
+		tc := f.Tests[0]
+
+		Convey("Then args and expect are captured", func() {
+			So(tc.Func, ShouldEqual, "ExtractTicket")
+			So(tc.Args["text"], ShouldEqual, "down!")
+			So(tc.Expect["title"], ShouldEqual, "Server is down")
+			So(tc.Expect["severity"], ShouldEqual, "CRITICAL")
+			So(tc.Expect["open"], ShouldEqual, "true")
+			So(tc.Expect["votes"], ShouldEqual, "3")
+		})
+
+		Convey("Then ExpectKeys preserves source order", func() {
+			So(tc.ExpectKeys, ShouldResemble, []string{"title", "severity", "open", "votes"})
+		})
+	})
+}

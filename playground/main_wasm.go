@@ -22,7 +22,7 @@ import (
 )
 
 func generate(_ js.Value, args []js.Value) any {
-	res := map[string]any{"go": "", "err": ""}
+	res := map[string]any{"go": "", "tests": "", "err": ""}
 	if len(args) < 1 {
 		res["err"] = "no input"
 		return js.ValueOf(res)
@@ -30,6 +30,11 @@ func generate(_ js.Value, args []js.Value) any {
 	f, perr := dsl.Parse(args[0].String())
 	out, gerr := codegen.Generate("app", f)
 	res["go"] = string(out)
+	// `test` blocks compile to a sibling _test.go; surface it too so the live-test
+	// feature is visible in the playground.
+	if tests, terr := codegen.GenerateTests("app", f); terr == nil && tests != nil {
+		res["tests"] = string(tests)
+	}
 	switch {
 	case perr != nil:
 		res["err"] = perr.Error()
