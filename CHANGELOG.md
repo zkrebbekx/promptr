@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/zkrebbekx/promptr/compare/v0.4.0...v0.5.0) (2026-06-27)
+
+
+### Features
+
+* **v0.5:** observability, validation, recorded provider, editor support ([#9](https://github.com/zkrebbekx/promptr/issues/9)) ([8164522](https://github.com/zkrebbekx/promptr/commit/81645222aedc48750c62dc09b824cbe64eaa3361))
+
 ## [0.4.0](https://github.com/zkrebbekx/promptr/compare/v0.3.0...v0.4.0) (2026-06-27)
 
 
