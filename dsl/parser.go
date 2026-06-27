@@ -162,18 +162,51 @@ func (p *parser) parseClient() ClientDecl {
 			continue
 		}
 		p.advance()
-		val := p.expect(tString, "setting value (string)")
 		switch key.text {
+		case "retry":
+			n := p.expect(tNumber, "retry count (number)")
+			d.Policy.Retry = atoi(n.text)
+		case "fallback":
+			d.Policy.Fallback = p.parseIdentList()
+		case "round_robin":
+			d.Policy.RoundRobin = p.parseIdentList()
 		case "provider":
-			d.Provider = val.text
+			d.Provider = p.expect(tString, "provider value (string)").text
 		case "model":
-			d.Model = val.text
+			d.Model = p.expect(tString, "model value (string)").text
 		default:
-			d.Extra[key.text] = val.text
+			d.Extra[key.text] = p.expect(tString, "setting value (string)").text
 		}
 	}
 	p.expect(tRBrace, "'}'")
 	return d
+}
+
+// parseIdentList reads `[ A, B, C ]` — a comma-separated list of client names.
+func (p *parser) parseIdentList() []string {
+	p.expect(tLBracket, "'['")
+	var out []string
+	for p.cur().kind != tRBracket && p.cur().kind != tEOF {
+		id := p.expect(tIdent, "client name")
+		out = append(out, id.text)
+		if !p.accept(tComma) {
+			break
+		}
+	}
+	p.expect(tRBracket, "']'")
+	return out
+}
+
+// atoi parses a non-negative integer from already-validated digit text.
+func atoi(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			break
+		}
+		n = n*10 + int(s[i]-'0')
+	}
+	return n
 }
 
 func (p *parser) parseFunc() FuncDecl {
