@@ -217,3 +217,33 @@ class Profile {
 		})
 	})
 }
+
+func TestGenerateStreamAndMultimodal(t *testing.T) {
+	Convey("Given a streaming function with an image param", t, func() {
+		code := generate(t, `
+class Caption { text string }
+function Describe(photo: image, hint: string) -> stream Caption {
+  client C
+  prompt #"Describe it. {{ hint }} {{ ctx.output_schema }}"#
+}`)
+
+		Convey("Then the image param is a promptr.Part", func() {
+			So(code, ShouldContainSubstring, "photo promptr.Part")
+		})
+
+		Convey("Then the return is a channel of partials via ExtractStream", func() {
+			So(code, ShouldContainSubstring, "(<-chan promptr.Partial[Caption], error)")
+			So(code, ShouldContainSubstring, "promptr.ExtractStream[Caption](ctx, p, prompt,")
+		})
+
+		Convey("Then the part param is attached as a multimodal UserPart, not templated", func() {
+			So(code, ShouldContainSubstring, "UserParts: []promptr.Part{photo}")
+			So(code, ShouldNotContainSubstring, `"photo": photo`)
+		})
+
+		Convey("Then it is valid Go", func() {
+			_, err := parser.ParseFile(token.NewFileSet(), "gen.go", code, parser.AllErrors)
+			So(err, ShouldBeNil)
+		})
+	})
+}

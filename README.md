@@ -180,6 +180,49 @@ Supported inside `{{ }}`: `{{ var }}` (with dotted paths `{{ user.name }}`),
 prompt never panics on real model context. The engine (`promptr.Render`) is
 usable directly, too.
 
+## Streaming & multimodal
+
+Mark a function `-> stream T` and the generated function returns a channel of
+**progressively-completed** `T` values — the schema-aligned parser coerces each
+growing prefix, so you can render a partial object while tokens are still
+arriving:
+
+```promptr
+function SummarizeArticle(article: string) -> stream Summary {
+  client Default
+  prompt #"Summarize it. {{ ctx.output_schema }} Article: {{ article }}"#
+}
+```
+
+```go
+ch, err := SummarizeArticle(ctx, provider, text)
+for part := range ch {           // promptr.Partial[Summary]
+    if part.Err != nil { break }
+    render(part.Value)           // headline fills in before the bullets do
+    if part.Complete { break }
+}
+```
+
+Any provider implementing the optional `StreamProvider` (`openai`, `anthropic`,
+`fake`) streams real tokens via SSE; others transparently fall back to a single
+complete value. `promptr.ExtractStream[T]` is usable directly, too.
+
+**Multimodal inputs.** Give a parameter the type `image`, `audio`, `pdf` or
+`file` and it becomes a `promptr.Part` attached to the user message (not
+templated into the prompt text):
+
+```promptr
+function CaptionImage(photo: image, hint: string) -> Summary { … }
+```
+
+```go
+cap, err := CaptionImage(ctx, provider, promptr.ImagePart("image/png", bytes), "be terse")
+```
+
+Providers map parts to their native content arrays (OpenAI `image_url`,
+Anthropic `image` blocks; inline bytes are base64 data-URLs, or pass a URL with
+`promptr.ImageURL`). See `examples/stream`.
+
 ## Providers
 
 The core imports no LLM SDK. A `Provider` is one method:

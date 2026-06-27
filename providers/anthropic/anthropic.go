@@ -7,8 +7,10 @@
 package anthropic
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,12 +54,64 @@ type reqBody struct {
 	Model     string   `json:"model"`
 	MaxTokens int      `json:"max_tokens"`
 	System    string   `json:"system,omitempty"`
+	Stream    bool     `json:"stream,omitempty"`
 	Messages  []apiMsg `json:"messages"`
 }
 
+// apiMsg.Content is `any`: a plain string for the text-only fast path, or an
+// array of content blocks for multimodal turns.
 type apiMsg struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// splitSystem merges promptr "system" turns into the API's top-level system
+// field and returns the remaining user/assistant turns as content blocks.
+func splitSystem(messages []promptr.Message) (string, []apiMsg) {
+	var systems []string
+	out := make([]apiMsg, 0, len(messages))
+	for _, m := range messages {
+		if m.Role == "system" {
+			systems = append(systems, m.Content)
+			continue
+		}
+		if len(m.Parts) == 0 {
+			out = append(out, apiMsg{Role: m.Role, Content: m.Content})
+			continue
+		}
+		out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
+	}
+	return strings.Join(systems, "\n\n"), out
+}
+
+// contentParts maps promptr parts to Anthropic content blocks.
+func contentParts(parts []promptr.Part) []map[string]any {
+	out := make([]map[string]any, 0, len(parts))
+	for _, p := range parts {
+		switch p.Kind {
+		case promptr.PartImage:
+			out = append(out, map[string]any{"type": "image", "source": imageSource(p)})
+		default:
+			out = append(out, map[string]any{"type": "text", "text": p.Text})
+		}
+	}
+	return out
+}
+
+// imageSource builds a base64 source for inline bytes or a url source.
+func imageSource(p promptr.Part) map[string]any {
+	if len(p.Data) > 0 {
+		mime := p.MIME
+		if mime == "" {
+			mime = "image/png"
+		}
+		return map[string]any{
+			"type":       "base64",
+			"media_type": mime,
+			"data":       base64.StdEncoding.EncodeToString(p.Data),
+		}
+	}
+	return map[string]any{"type": "url", "url": p.URL}
 }
 
 type respBody struct {
@@ -79,15 +133,7 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 		return "", fmt.Errorf("anthropic: empty API key")
 	}
 	body := reqBody{Model: c.Model, MaxTokens: c.maxTokens()}
-	var systems []string
-	for _, m := range messages {
-		if m.Role == "system" {
-			systems = append(systems, m.Content)
-			continue
-		}
-		body.Messages = append(body.Messages, apiMsg{Role: m.Role, Content: m.Content})
-	}
-	body.System = strings.Join(systems, "\n\n")
+	body.System, body.Messages = splitSystem(messages)
 
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -131,6 +177,78 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 	return sb.String(), nil
 }
 
+// streamEvent is one decoded SSE `data:` payload from the Messages stream. We
+// only care about text deltas; other event types are ignored.
+type streamEvent struct {
+	Type  string `json:"type"`
+	Delta struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"delta"`
+}
+
+// Stream sends the conversation with stream:true and yields each text delta as
+// it arrives, parsing the server-sent events. It implements
+// promptr.StreamProvider.
+func (c *Client) Stream(ctx context.Context, messages []promptr.Message) (<-chan string, error) {
+	if c.APIKey == "" {
+		return nil, fmt.Errorf("anthropic: empty API key")
+	}
+	body := reqBody{Model: c.Model, MaxTokens: c.maxTokens(), Stream: true}
+	body.System, body.Messages = splitSystem(messages)
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/messages", bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", c.version())
+	req.Header.Set("accept", "text/event-stream")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("anthropic: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	out := make(chan string)
+	go func() {
+		defer close(out)
+		defer func() { _ = resp.Body.Close() }()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			data, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "data:")
+			if !ok {
+				continue
+			}
+			var ev streamEvent
+			if json.Unmarshal([]byte(strings.TrimSpace(data)), &ev) != nil {
+				continue
+			}
+			if ev.Type == "message_stop" {
+				return
+			}
+			if ev.Delta.Text != "" {
+				select {
+				case out <- ev.Delta.Text:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
 func (c *Client) maxTokens() int {
 	if c.MaxTokens <= 0 {
 		return defaultMaxTokens
@@ -159,5 +277,8 @@ func (c *Client) httpClient() *http.Client {
 	return c.HTTP
 }
 
-// static assertion: Client satisfies the runtime contract.
-var _ promptr.Provider = (*Client)(nil)
+// static assertions: Client satisfies both runtime contracts.
+var (
+	_ promptr.Provider       = (*Client)(nil)
+	_ promptr.StreamProvider = (*Client)(nil)
+)

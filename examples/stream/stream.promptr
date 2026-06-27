@@ -1,0 +1,33 @@
+// Streaming a structured summary token-by-token, and captioning an image — the
+// v0.4 streaming + multimodal showcase.
+class Summary {
+  headline string @description("a one-line title")
+  bullets  string[]
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+// Streamed: the generated SummarizeArticle returns a channel of partial
+// Summary values as the model emits tokens.
+function SummarizeArticle(article: string) -> stream Summary {
+  client Default
+  prompt #"
+    Summarize the article as a headline plus bullet points.
+    {{ ctx.output_schema }}
+    Article: {{ article }}
+  "#
+}
+
+// Multimodal: the image param is attached to the user message as a binary part,
+// not templated into the prompt text.
+function CaptionImage(photo: image, hint: string) -> Summary {
+  client Default
+  prompt #"
+    Caption the attached image.
+    {{ ctx.output_schema }}
+    Hint: {{ hint }}
+  "#
+}

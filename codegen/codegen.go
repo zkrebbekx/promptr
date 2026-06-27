@@ -191,27 +191,75 @@ func clientRefs(names []string) string {
 
 func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	g.usedCtx = true
+	var partParams []dsl.Param
 	params := []string{"ctx context.Context", "p promptr.Provider"}
 	for _, pm := range fn.Params {
 		params = append(params, fmt.Sprintf("%s %s", pm.Name, g.goType(pm.Type)))
+		if isPartType(pm.Type.Name) {
+			partParams = append(partParams, pm)
+		}
 	}
-	ret := g.goType(fn.Ret)
-	fmt.Fprintf(b, "func %s(%s) (%s, error) {\n", fn.Name, strings.Join(params, ", "), ret)
+	// elem is the coerced value type; retType wraps it in a channel when streaming.
+	elem := g.goType(fn.Ret)
+	retType := elem
+	if fn.Stream {
+		retType = "<-chan promptr.Partial[" + elem + "]"
+	}
+	fmt.Fprintf(b, "func %s(%s) (%s, error) {\n", fn.Name, strings.Join(params, ", "), retType)
+
 	// Render the prompt at runtime so it can use control flow; the output-schema
-	// description is still computed at compile time and injected via ctx.
+	// description is still computed at compile time and injected via ctx. Binary
+	// part params (image/audio/pdf) are attached to the message, not templated.
 	fmt.Fprintf(b, "\tprompt, err := promptr.Render(%s, map[string]any{\n", quote(fn.Prompt))
 	for _, pm := range fn.Params {
+		if isPartType(pm.Type.Name) {
+			continue
+		}
 		fmt.Fprintf(b, "\t\t%q: %s,\n", pm.Name, pm.Name)
 	}
 	fmt.Fprintf(b, "\t\t\"ctx\": map[string]any{\"output_schema\": %s},\n", quote(g.schemaFor(fn.Ret)))
 	b.WriteString("\t})\n")
-	fmt.Fprintf(b, "\tif err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n", ret)
-	if u, ok := g.unions[fn.Ret.Name]; ok {
-		// Union return: classify the reply into one of the variants.
-		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, promptr.Options{Attempts: 2}, promptr.NewUnion(%s))\n}\n\n", ret, unionSamples(u))
-		return
+	fmt.Fprintf(b, "\tif err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n", retType)
+
+	opts := renderOptions(partParams)
+	switch {
+	case g.isUnion(fn.Ret.Name):
+		u := g.unions[fn.Ret.Name]
+		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, %s, promptr.NewUnion(%s))\n}\n\n", elem, opts, unionSamples(u))
+	case fn.Stream:
+		fmt.Fprintf(b, "\treturn promptr.ExtractStream[%s](ctx, p, prompt, %s)\n}\n\n", elem, opts)
+	default:
+		fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, %s)\n}\n\n", elem, opts)
 	}
-	fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, promptr.Options{Attempts: 2})\n}\n\n", ret)
+}
+
+func (g *gen) isUnion(name string) bool {
+	_, ok := g.unions[name]
+	return ok
+}
+
+// renderOptions builds the promptr.Options literal, attaching any binary part
+// params as multimodal UserParts.
+func renderOptions(partParams []dsl.Param) string {
+	if len(partParams) == 0 {
+		return "promptr.Options{Attempts: 2}"
+	}
+	names := make([]string, len(partParams))
+	for i, pm := range partParams {
+		names[i] = pm.Name
+	}
+	return fmt.Sprintf("promptr.Options{Attempts: 2, UserParts: []promptr.Part{%s}}", strings.Join(names, ", "))
+}
+
+// isPartType reports whether a DSL type name denotes a multimodal binary input
+// that maps to a promptr.Part rather than a templated value.
+func isPartType(name string) bool {
+	switch name {
+	case "image", "audio", "pdf", "file":
+		return true
+	default:
+		return false
+	}
 }
 
 // unionSamples renders the `Variant{}, ...` zero-value list for promptr.NewUnion.
@@ -301,6 +349,9 @@ func (g *gen) goType(t dsl.TypeRef) string {
 		// (e.g. a class field): no generated interface to name, so fall back to
 		// any. Named unions (t.Name) flow through primitive below.
 		return "any"
+	}
+	if isPartType(t.Name) {
+		return "promptr.Part"
 	}
 	base := primitive(t.Name)
 	switch {

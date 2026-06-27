@@ -96,11 +96,14 @@ type Param struct {
 }
 
 // FuncDecl is a typed LLM function: inputs, an output type, the client it runs
-// on, and the prompt template (with {{ ... }} holes the compiler fills).
+// on, and the prompt template (with {{ ... }} holes the compiler fills). When
+// Stream is set (`-> stream T`) the generated function returns a channel of
+// progressively-completed partial values.
 type FuncDecl struct {
 	Name   string
 	Params []Param
 	Ret    TypeRef
+	Stream bool
 	Client string
 	Prompt string
 	Line   int

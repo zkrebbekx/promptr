@@ -25,7 +25,7 @@ func ExtractUnion[I any](ctx context.Context, p Provider, prompt string, opts Op
 	if opts.System != "" {
 		msgs = append(msgs, Message{Role: "system", Content: opts.System})
 	}
-	msgs = append(msgs, Message{Role: "user", Content: prompt})
+	msgs = append(msgs, opts.userMessage(prompt))
 
 	var lastErr error
 	for i := 0; i < opts.attempts(); i++ {
