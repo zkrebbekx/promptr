@@ -3,8 +3,6 @@ package promptr
 import (
 	"context"
 	"fmt"
-
-	"github.com/zkrebbekx/promptr/coerce"
 )
 
 // ToolDef describes a tool offered to the model: its name, a one-line
@@ -94,14 +92,14 @@ func RunTools[T any](ctx context.Context, p Provider, prompt string, tools []Too
 		}
 
 		if len(reply.Calls) == 0 {
-			v, perr := coerce.Into[T](reply.Text)
-			if perr == nil {
+			v, repair, ferr := finalize[T](reply.Text, opts)
+			if ferr == nil {
 				return v, nil
 			}
-			lastErr = perr
+			lastErr = ferr
 			msgs = append(msgs,
 				Message{Role: "assistant", Content: reply.Text},
-				Message{Role: "user", Content: "That reply could not be parsed (" + perr.Error() + "). Reply again with only the valid value, no commentary."},
+				Message{Role: "user", Content: repair},
 			)
 			continue
 		}

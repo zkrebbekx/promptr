@@ -48,7 +48,7 @@ type PlanTripTools struct {
 	SearchFlights func(context.Context, SearchFlightsArgs) ([]Flight, error)
 }
 
-func PlanTrip(ctx context.Context, p promptr.Provider, goal string, tools PlanTripTools) (Itinerary, error) {
+func PlanTrip(ctx context.Context, p promptr.Provider, goal string, tools PlanTripTools, opt ...promptr.Option) (Itinerary, error) {
 	prompt, err := promptr.Render(`
     Plan a trip for this goal, using the tools to check weather and flights.
     {{ ctx.output_schema }}
@@ -65,6 +65,10 @@ func PlanTrip(ctx context.Context, p promptr.Provider, goal string, tools PlanTr
 	if err != nil {
 		var zero Itinerary
 		return zero, err
+	}
+	options := promptr.Options{Attempts: 2}
+	for _, o := range opt {
+		o(&options)
 	}
 	return promptr.RunTools[Itinerary](ctx, p, prompt, []promptr.Tool{
 		{
@@ -110,5 +114,5 @@ func PlanTrip(ctx context.Context, p promptr.Provider, goal string, tools PlanTr
 				return string(out), nil
 			},
 		},
-	}, promptr.Options{Attempts: 2})
+	}, options)
 }

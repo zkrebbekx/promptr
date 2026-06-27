@@ -153,8 +153,43 @@ class Profile {
 
 `@description` annotates the field in the baked schema; `@alias` renames it on
 the wire — the model is shown `full_name`, and `coerce` binds that back to
-`Name`. (`@assert`/`@check` validation via [valx](https://github.com/zkrebbekx/valx)
-is planned for a later release.)
+`Name`.
+
+## Validation — `@assert` & `@check`
+
+Coercion shapes a reply into your type; validation enforces what the *values*
+must be. Two field attributes compile to [valx](https://github.com/zkrebbekx/valx)
+rules the runtime applies after coercion:
+
+```promptr
+class Account {
+  email    string @assert("required")
+  username string @assert("min=3,max=20")
+  age      int    @assert("gt=0,lt=130") @check("min=18")
+  seats    int    @check("min=1,max=100")
+}
+```
+
+- **`@assert`** is *hard*. A violation is fed back to the model as a repair
+  re-ask — exactly like a parse failure — so it self-corrects within
+  `Attempts`. If it never satisfies the rules, the call returns the validation
+  error.
+- **`@check`** is *soft*. Violations never block the value; they're delivered to
+  an `OnCheck` sink so you can log or meter them while still using the result.
+
+Generated functions take a trailing `...promptr.Option`, so checks (and retry
+budgets, a system preamble, …) are opt-in without the signature changing:
+
+```go
+acc, err := ExtractAccount(ctx, p, msg,
+    promptr.OnCheck(func(e error) { log.Println("soft:", e) }),
+    promptr.WithAttempts(3),
+)
+```
+
+The validator lives in *generated* code, so the core packages stay
+zero-dependency — importing `promptr` pulls in nothing extra. See
+[`examples/validate`](examples/validate).
 
 ## Prompt templates
 

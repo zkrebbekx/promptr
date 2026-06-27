@@ -56,10 +56,12 @@ type ClassDecl struct {
 // @description / @alias attributes that tune the baked schema (and, for @alias,
 // the json name the coerce kernel binds the model's output to).
 type FieldDecl struct {
-	Name  string
-	Type  TypeRef
-	Desc  string // @description("...") — human guidance shown to the model
-	Alias string // @alias("...") — alternate wire/prompt name for this field
+	Name   string
+	Type   TypeRef
+	Desc   string // @description("...") — human guidance shown to the model
+	Alias  string // @alias("...") — alternate wire/prompt name for this field
+	Assert string // @assert("<valx rules>") — hard constraints; failure drives a repair re-ask
+	Check  string // @check("<valx rules>") — soft constraints; violations are advisory
 }
 
 // TypeRef names a field/return/param type: a primitive (string, int, float,

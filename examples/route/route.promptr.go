@@ -28,7 +28,7 @@ func ClientDefault(reg promptr.Registry) promptr.Provider {
 	return reg.Get("Default")
 }
 
-func Route(ctx context.Context, p promptr.Provider, message string) (Action, error) {
+func Route(ctx context.Context, p promptr.Provider, message string, opt ...promptr.Option) (Action, error) {
 	prompt, err := promptr.Render(`
     Decide how to handle the user's message: either run a Search or Escalate it.
     {{ ctx.output_schema }}
@@ -52,5 +52,9 @@ Answer with a JSON object of exactly this shape:
 		var zero Action
 		return zero, err
 	}
-	return promptr.ExtractUnion[Action](ctx, p, prompt, promptr.Options{Attempts: 2}, promptr.NewUnion(Search{}, Escalate{}))
+	options := promptr.Options{Attempts: 2}
+	for _, o := range opt {
+		o(&options)
+	}
+	return promptr.ExtractUnion[Action](ctx, p, prompt, options, promptr.NewUnion(Search{}, Escalate{}))
 }

@@ -17,6 +17,9 @@ import (
 
 const runtimePkg = "github.com/zkrebbekx/promptr"
 
+// valxPkg is the value-validator generated code imports for @assert/@check rules.
+const valxPkg = "github.com/zkrebbekx/valx"
+
 // Generate renders the whole File as a single Go source file in package pkg.
 func Generate(pkg string, f *dsl.File) ([]byte, error) {
 	desugarInlineUnions(f)
@@ -62,6 +65,7 @@ type gen struct {
 	usedCtx    bool
 	usedCoerce bool // generated code references the coerce package
 	usedJSON   bool // generated code references encoding/json
+	usedValx   bool // generated code references the valx validator
 }
 
 func (g *gen) render() string {
@@ -112,6 +116,9 @@ func (g *gen) imports() []string {
 	if g.usedCoerce {
 		imps = append(imps, runtimePkg+"/coerce")
 	}
+	if g.usedValx {
+		imps = append(imps, valxPkg)
+	}
 	return imps
 }
 
@@ -140,11 +147,21 @@ func (g *gen) renderClass(b *strings.Builder, c dsl.ClassDecl) {
 	for _, fld := range c.Fields {
 		// @alias renames the wire/json field so the coerce kernel binds the
 		// model's output (which the baked schema shows under the alias) to it.
-		tag := wireName(fld)
+		jsonTag := wireName(fld)
 		if fld.Type.Optional {
-			tag += ",omitempty"
+			jsonTag += ",omitempty"
 		}
-		fmt.Fprintf(b, "\t%s %s `json:%q`\n", goName(fld.Name), g.goType(fld.Type), tag)
+		// One struct tag carries the json binding plus, when declared, the @assert
+		// rules under "valx" (hard) and @check rules under "check" (soft); the
+		// generated function feeds these to valx.Validate / valx.ValidateWith.
+		parts := []string{fmt.Sprintf("json:%q", jsonTag)}
+		if fld.Assert != "" {
+			parts = append(parts, fmt.Sprintf("valx:%q", fld.Assert))
+		}
+		if fld.Check != "" {
+			parts = append(parts, fmt.Sprintf("check:%q", fld.Check))
+		}
+		fmt.Fprintf(b, "\t%s %s `%s`\n", goName(fld.Name), g.goType(fld.Type), strings.Join(parts, " "))
 	}
 	b.WriteString("}\n\n")
 }
@@ -251,6 +268,9 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 		g.renderToolHandlers(b, fn)
 		params = append(params, "tools "+fn.Name+"Tools")
 	}
+	// A trailing variadic of functional options lets callers tune retries, a
+	// system preamble, or a soft-check sink without the signature changing.
+	params = append(params, "opt ...promptr.Option")
 	// elem is the coerced value type; retType wraps it in a channel when streaming.
 	elem := g.goType(fn.Ret)
 	retType := elem
@@ -273,17 +293,22 @@ func (g *gen) renderFunc(b *strings.Builder, fn dsl.FuncDecl) {
 	b.WriteString("\t})\n")
 	fmt.Fprintf(b, "\tif err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n", retType)
 
-	opts := renderOptions(partParams)
+	// Build the Options the call uses, then apply any caller-supplied functional
+	// options over the top before dispatching.
+	opts := g.renderOptions(partParams, fn.Ret)
+	fmt.Fprintf(b, "\toptions := %s\n", opts)
+	b.WriteString("\tfor _, o := range opt {\n\t\to(&options)\n\t}\n")
+
 	switch {
 	case len(fn.Tools) > 0:
-		g.renderToolCall(b, fn, elem, opts)
+		g.renderToolCall(b, fn, elem)
 	case g.isUnion(fn.Ret.Name):
 		u := g.unions[fn.Ret.Name]
-		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, %s, promptr.NewUnion(%s))\n}\n\n", elem, opts, unionSamples(u))
+		fmt.Fprintf(b, "\treturn promptr.ExtractUnion[%s](ctx, p, prompt, options, promptr.NewUnion(%s))\n}\n\n", elem, unionSamples(u))
 	case fn.Stream:
-		fmt.Fprintf(b, "\treturn promptr.ExtractStream[%s](ctx, p, prompt, %s)\n}\n\n", elem, opts)
+		fmt.Fprintf(b, "\treturn promptr.ExtractStream[%s](ctx, p, prompt, options)\n}\n\n", elem)
 	default:
-		fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, %s)\n}\n\n", elem, opts)
+		fmt.Fprintf(b, "\treturn promptr.Extract[%s](ctx, p, prompt, options)\n}\n\n", elem)
 	}
 }
 
@@ -304,7 +329,7 @@ func (g *gen) renderToolHandlers(b *strings.Builder, fn dsl.FuncDecl) {
 
 // renderToolCall emits the []promptr.Tool literal (wrapping each typed handler)
 // and the RunTools call that drives the agent loop.
-func (g *gen) renderToolCall(b *strings.Builder, fn dsl.FuncDecl, elem, opts string) {
+func (g *gen) renderToolCall(b *strings.Builder, fn dsl.FuncDecl, elem string) {
 	g.usedCoerce = true
 	g.usedJSON = true
 	b.WriteString("\treturn promptr.RunTools[" + elem + "](ctx, p, prompt, []promptr.Tool{\n")
@@ -327,7 +352,7 @@ func (g *gen) renderToolCall(b *strings.Builder, fn dsl.FuncDecl, elem, opts str
 		b.WriteString("\t\t\t},\n")
 		b.WriteString("\t\t},\n")
 	}
-	fmt.Fprintf(b, "\t}, %s)\n}\n\n", opts)
+	b.WriteString("\t}, options)\n}\n\n")
 }
 
 func (g *gen) isUnion(name string) bool {
@@ -335,17 +360,75 @@ func (g *gen) isUnion(name string) bool {
 	return ok
 }
 
-// renderOptions builds the promptr.Options literal, attaching any binary part
-// params as multimodal UserParts.
-func renderOptions(partParams []dsl.Param) string {
-	if len(partParams) == 0 {
-		return "promptr.Options{Attempts: 2}"
+// renderOptions builds the promptr.Options literal: the default retry budget,
+// any binary part params as multimodal UserParts, and — when the return type's
+// class graph declares @assert / @check rules — the valx-backed Validate / Check
+// closures that finalize applies to each coerced reply.
+func (g *gen) renderOptions(partParams []dsl.Param, ret dsl.TypeRef) string {
+	fields := []string{"Attempts: 2"}
+	if len(partParams) > 0 {
+		names := make([]string, len(partParams))
+		for i, pm := range partParams {
+			names[i] = pm.Name
+		}
+		fields = append(fields, fmt.Sprintf("UserParts: []promptr.Part{%s}", strings.Join(names, ", ")))
 	}
-	names := make([]string, len(partParams))
-	for i, pm := range partParams {
-		names[i] = pm.Name
+	if g.retHasRules(ret, func(f dsl.FieldDecl) string { return f.Assert }) {
+		g.usedValx = true
+		fields = append(fields, "Validate: func(v any) error { return valx.Validate(v) }")
 	}
-	return fmt.Sprintf("promptr.Options{Attempts: 2, UserParts: []promptr.Part{%s}}", strings.Join(names, ", "))
+	if g.retHasRules(ret, func(f dsl.FieldDecl) string { return f.Check }) {
+		g.usedValx = true
+		fields = append(fields, `Check: func(v any) error { return valx.ValidateWith(v, "check") }`)
+	}
+	return "promptr.Options{" + strings.Join(fields, ", ") + "}"
+}
+
+// retHasRules reports whether the return type's class graph declares any field
+// attribute selected by pick (e.g. @assert or @check), so the generated function
+// knows whether to wire the corresponding validation closure.
+func (g *gen) retHasRules(t dsl.TypeRef, pick func(dsl.FieldDecl) string) bool {
+	return g.typeHasRules(t, pick, map[string]bool{})
+}
+
+func (g *gen) typeHasRules(t dsl.TypeRef, pick func(dsl.FieldDecl) string, seen map[string]bool) bool {
+	for _, v := range t.Union {
+		if g.nameHasRules(v, pick, seen) {
+			return true
+		}
+	}
+	if t.Elem != nil && g.typeHasRules(*t.Elem, pick, seen) {
+		return true
+	}
+	return g.nameHasRules(t.Name, pick, seen)
+}
+
+func (g *gen) nameHasRules(name string, pick func(dsl.FieldDecl) string, seen map[string]bool) bool {
+	if name == "" || seen[name] {
+		return false
+	}
+	seen[name] = true
+	if u, ok := g.unions[name]; ok {
+		for _, v := range u.Variants {
+			if g.nameHasRules(v, pick, seen) {
+				return true
+			}
+		}
+		return false
+	}
+	c := g.classByName(name)
+	if c == nil {
+		return false
+	}
+	for _, f := range c.Fields {
+		if pick(f) != "" {
+			return true
+		}
+		if g.typeHasRules(f.Type, pick, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 // isPartType reports whether a DSL type name denotes a multimodal binary input

@@ -152,6 +152,10 @@ func (p *parser) parseFieldAttrs(fld *FieldDecl) {
 			fld.Desc = av.text
 		case "alias":
 			fld.Alias = av.text
+		case "assert":
+			fld.Assert = av.text
+		case "check":
+			fld.Check = av.text
 		default:
 			p.errf(an, "unknown field attribute %q", an.text)
 		}

@@ -2,7 +2,10 @@ module github.com/zkrebbekx/promptr
 
 go 1.23
 
-require github.com/smartystreets/goconvey v1.8.1
+require (
+	github.com/smartystreets/goconvey v1.8.1
+	github.com/zkrebbekx/valx v0.2.0
+)
 
 require (
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
