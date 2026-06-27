@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/zkrebbekx/promptr/compare/v0.2.0...v0.3.0) (2026-06-27)
+
+
+### Features
+
+* **v0.3:** union types, maps, and field attributes ([#5](https://github.com/zkrebbekx/promptr/issues/5)) ([890ac08](https://github.com/zkrebbekx/promptr/commit/890ac08a6aad964c801796a367e995f116596f9b))
+
 ## [0.2.0](https://github.com/zkrebbekx/promptr/compare/v0.1.0...v0.2.0) (2026-06-27)
 
 
