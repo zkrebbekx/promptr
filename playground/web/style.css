@@ -36,6 +36,63 @@ header p { margin: 0.4rem auto; max-width: 46rem; color: var(--muted); }
 .links a { color: var(--link); text-decoration: none; }
 .links a:hover { text-decoration: underline; }
 
+.badge {
+  font-size: 0.85rem;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--accent);
+  text-decoration: none;
+  font-family: ui-monospace, monospace;
+}
+.badge:hover { border-color: var(--accent); }
+
+#examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0.5rem 1.5rem 0;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.chip {
+  font: 0.85rem ui-monospace, monospace;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--link); }
+.chip.active { border-color: var(--accent); color: var(--accent); }
+
+.blurb {
+  text-align: center;
+  max-width: 46rem;
+  margin: 0.5rem auto 0;
+  padding: 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 1.2rem;
+}
+
+.pane h2 button {
+  float: right;
+  font: 0.8rem ui-monospace, monospace;
+  color: var(--link);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+.pane h2 button:hover { border-color: var(--link); }
+
 main {
   display: grid;
   grid-template-columns: 1fr 1fr;

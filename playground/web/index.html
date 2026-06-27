@@ -8,19 +8,28 @@
 </head>
 <body>
 <header>
-  <h1>promptr<span class="caret">_</span></h1>
+  <h1>promptr<span class="caret">_</span>
+    <a class="badge" href="https://github.com/zkrebbekx/promptr/releases/latest">v0.12.0</a>
+  </h1>
   <p>Typed prompts for Go. Everything below runs client-side in WebAssembly —
      no API calls.</p>
   <p class="links">
     <a href="https://github.com/zkrebbekx/promptr">GitHub</a> ·
-    <a href="https://pkg.go.dev/github.com/zkrebbekx/promptr">docs</a>
+    <a href="https://pkg.go.dev/github.com/zkrebbekx/promptr">docs</a> ·
+    <a href="https://github.com/zkrebbekx/promptr/releases/latest">releases</a>
   </p>
 </header>
 
+<nav id="examples" aria-label="examples"></nav>
+<p id="blurb" class="blurb"></p>
+
 <main>
   <section class="pane">
-    <h2>1 · DSL → Go</h2>
-    <p class="hint">A <code>.promptr</code> schema compiles to idiomatic Go.</p>
+    <h2>1 · DSL → Go
+      <button id="fmt-btn" type="button" title="Canonically format the schema (promptr fmt)">Format</button>
+    </h2>
+    <p class="hint">A <code>.promptr</code> schema compiles to idiomatic Go.
+       Pick an example above, edit freely, or hit <strong>Format</strong>.</p>
     <textarea id="dsl" spellcheck="false"></textarea>
     <pre id="go" class="out"></pre>
   </section>

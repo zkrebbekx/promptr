@@ -1,13 +1,15 @@
 //go:build js && wasm
 
 // Command playground is the WASM backend for the promptr web playground. It
-// exposes two functions to JavaScript:
+// exposes three functions to JavaScript:
 //
 //	promptrGenerate(src)  -> { go, err }   compile .promptr source to Go
+//	promptrFormat(src)    -> { src, err }  canonically format .promptr source
 //	promptrParse(raw)     -> { json, err } run the tolerant coerce parser
 //
-// Both run fully client-side — no API calls — so the page is a self-contained
-// demo of the compiler and the schema-aligned parser kernel.
+// All run fully client-side — no API calls — so the page is a self-contained
+// demo of the compiler, the canonical formatter, and the schema-aligned parser
+// kernel.
 package main
 
 import (
@@ -37,6 +39,21 @@ func generate(_ js.Value, args []js.Value) any {
 	return js.ValueOf(res)
 }
 
+func format(_ js.Value, args []js.Value) any {
+	res := map[string]any{"src": "", "err": ""}
+	if len(args) < 1 {
+		res["err"] = "no input"
+		return js.ValueOf(res)
+	}
+	out, err := dsl.Format(args[0].String())
+	if err != nil {
+		res["err"] = err.Error()
+		return js.ValueOf(res)
+	}
+	res["src"] = out
+	return js.ValueOf(res)
+}
+
 func parse(_ js.Value, args []js.Value) any {
 	res := map[string]any{"json": "", "err": ""}
 	if len(args) < 1 {
@@ -54,6 +71,7 @@ func parse(_ js.Value, args []js.Value) any {
 
 func main() {
 	js.Global().Set("promptrGenerate", js.FuncOf(generate))
+	js.Global().Set("promptrFormat", js.FuncOf(format))
 	js.Global().Set("promptrParse", js.FuncOf(parse))
 	select {}
 }
