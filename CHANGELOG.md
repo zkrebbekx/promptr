@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/zkrebbekx/promptr/compare/v0.12.0...v0.13.0) (2026-06-27)
+
+
+### Features
+
+* live test runner — emit Go tests from `test` blocks with typed assertions ([#27](https://github.com/zkrebbekx/promptr/issues/27)) ([fd12ee9](https://github.com/zkrebbekx/promptr/commit/fd12ee9b8b9876a3cfd7f6aeb5b7dad9adbb3b49))
+
 ## [0.12.0](https://github.com/zkrebbekx/promptr/compare/v0.11.0...v0.12.0) (2026-06-27)
 
 
