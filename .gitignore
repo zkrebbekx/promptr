@@ -9,3 +9,7 @@ dist/
 # WASM build artifacts (CI rebuilds; wasm_exec.js is toolchain-provided)
 playground/web/main.wasm
 playground/web/wasm_exec.js
+
+# stray CLI binaries built into the repo root (the packages live in cmd/)
+/promptr
+/promptr-lsp
