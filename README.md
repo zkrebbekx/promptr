@@ -240,6 +240,7 @@ type Provider interface {
 | `providers/gemini` | Google Gemini (Generative Language API) |
 | `providers/ollama` | Local models via Ollama |
 | `providers/fake` | Deterministic scripted replies for tests and the playground |
+| `providers/recorded` | Replays hand-authored JSON cassettes — a VCR for deterministic, offline tests |
 
 Each is `net/http` only — import just the one you use. Wiring any other model is
 a dozen lines.
@@ -266,6 +267,44 @@ ticket, err := ExtractTicket(ctx, provider, msg)
 
 `promptr.Retry`, `promptr.Fallback`, and `promptr.RoundRobin` are also usable
 directly — each is just a `Provider` that wraps other `Provider`s.
+
+## Observability
+
+A `Middleware` is just a `Provider`-to-`Provider` function, so you can wrap any
+provider without touching generated code. The built-in `Collector` records
+latency and token usage per call (exact when a provider implements
+`UsageReporter`, otherwise a `chars/4` estimate):
+
+```go
+col := &promptr.Collector{}
+p := promptr.Chain(openaiClient, col.Collect) // outermost-first
+_, _ = ExtractTicket(ctx, p, msg)
+
+s := col.Stats()
+log.Printf("%d calls, %d tokens, %s avg", s.Calls, s.TotalTokens(), s.AvgLatency())
+```
+
+`Chain` composes middlewares; the OpenTelemetry exporter is left to a future
+opt-in subpackage so the core stays dependency-free — `Middleware` is the seam
+it plugs into.
+
+## Tooling & editor support
+
+```sh
+promptr generate ./...   # compile .promptr -> Go (run under //go:generate)
+promptr check ./...       # parse + validate without writing Go (CI-friendly)
+```
+
+`promptr check` reports unresolved types/clients, malformed unions and `test`
+blocks whose args don't match their function — the same checks the language
+server surfaces in your editor. Install `cmd/promptr-lsp` for live diagnostics
+and see [`editor/`](editor/) for the tree-sitter grammar and editor wiring.
+
+> Deferred for a focused follow-up: `promptr fmt` (a canonical formatter needs
+> the lexer to retain comments, currently dropped as trivia) and a
+> live-execution `test` runner with typed assertions (best done by emitting Go
+> tests from `test` blocks, which deserves its own provider-wiring design).
+> `providers/recorded` is the deterministic substrate both will build on.
 
 ## Install
 

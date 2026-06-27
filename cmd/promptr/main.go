@@ -34,6 +34,8 @@ func main() {
 	switch os.Args[1] {
 	case "generate":
 		os.Exit(cmdGenerate(os.Args[2:]))
+	case "check":
+		os.Exit(cmdCheck(os.Args[2:]))
 	case "version", "-v", "--version":
 		fmt.Println("promptr", version)
 	case "-h", "--help", "help":
@@ -50,9 +52,58 @@ func usage() {
 
 usage:
   promptr generate [-pkg name] [path ...]   compile .promptr files (default ".")
+  promptr check [path ...]                  parse + validate without writing Go
   promptr version
 
 `)
+}
+
+// cmdCheck parses and semantically validates .promptr files without generating
+// Go, reporting syntax errors and resolution/test diagnostics. Exit 1 on any
+// problem — suitable for CI and pre-commit.
+func cmdCheck(args []string) int {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	_ = fs.Parse(args)
+	paths := fs.Args()
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+
+	files, err := collect(paths)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "promptr:", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "promptr: no .promptr files found")
+		return 1
+	}
+
+	rc := 0
+	for _, in := range files {
+		srcBytes, rerr := os.ReadFile(in)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "promptr: %s: %v\n", in, rerr)
+			rc = 1
+			continue
+		}
+		f, perr := dsl.Parse(string(srcBytes))
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", in, perr)
+			rc = 1
+		}
+		diags := dsl.Validate(f)
+		for _, d := range diags {
+			fmt.Fprintf(os.Stderr, "%s:%d: %s\n", in, d.Line, d.Msg)
+		}
+		if len(diags) > 0 {
+			rc = 1
+		}
+		if perr == nil && len(diags) == 0 {
+			fmt.Println("promptr: ok", in)
+		}
+	}
+	return rc
 }
 
 func cmdGenerate(args []string) int {
