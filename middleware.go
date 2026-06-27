@@ -11,6 +11,11 @@ import (
 // caching, rate limiting — without touching the generated code. A Middleware is
 // just a Provider-to-Provider function, so they compose by nesting and a wrapped
 // provider is still a plain Provider the runtime can call.
+//
+// Middleware only intercepts Complete: the wrapped value does not re-expose
+// StreamProvider or ToolProvider, so wrapping a streaming or tool-calling
+// provider hides those capabilities. To observe streaming and tool calls too,
+// prefer WithHooks (hooks.go), which is capability-preserving.
 type Middleware func(Provider) Provider
 
 // Chain applies middlewares to p, outermost first: Chain(p, a, b) yields
@@ -22,11 +27,12 @@ func Chain(p Provider, mws ...Middleware) Provider {
 	return p
 }
 
-// providerFunc adapts a function to the Provider interface, so middleware can
-// build wrappers inline.
-type providerFunc func(ctx context.Context, messages []Message) (string, error)
+// ProviderFunc adapts a plain function to the Provider interface, for inline or
+// test providers and for middleware that build wrappers without a named type.
+type ProviderFunc func(ctx context.Context, messages []Message) (string, error)
 
-func (f providerFunc) Complete(ctx context.Context, messages []Message) (string, error) {
+// Complete calls the underlying function.
+func (f ProviderFunc) Complete(ctx context.Context, messages []Message) (string, error) {
 	return f(ctx, messages)
 }
 
@@ -58,9 +64,11 @@ type Collector struct {
 	calls []Call
 }
 
-// Collect returns a Middleware that records every Complete into c.
+// Collect returns a Middleware that records every Complete into c. It captures
+// only the Complete path; to record streaming and tool calls as well, wire the
+// collector with WithHooks(p, c.Hook()) instead.
 func (c *Collector) Collect(p Provider) Provider {
-	return providerFunc(func(ctx context.Context, messages []Message) (string, error) {
+	return ProviderFunc(func(ctx context.Context, messages []Message) (string, error) {
 		start := time.Now()
 		reply, err := p.Complete(ctx, messages)
 		call := Call{Start: start, Duration: time.Since(start), Err: err}

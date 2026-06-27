@@ -141,7 +141,7 @@ func TestRunToolsBudgetExhausted(t *testing.T) {
 
 func TestRunToolsRequiresToolProvider(t *testing.T) {
 	Convey("Given a provider that does not implement ToolProvider", t, func() {
-		p := providerFunc(func(_ context.Context, _ []Message) (string, error) { return "", nil })
+		p := ProviderFunc(func(_ context.Context, _ []Message) (string, error) { return "", nil })
 
 		Convey("When RunTools is called", func() {
 			_, err := RunTools[sum](context.Background(), p, "go", nil, Options{})
