@@ -122,11 +122,17 @@ type FuncDecl struct {
 	Stream bool
 	Client string
 	Prompt string
-	// Tools names the declared tools this function may call. When non-empty the
-	// generated function takes a typed handlers struct and runs the agent loop
-	// (promptr.RunTools) instead of a single Extract.
+	// Tools names the things this function may call during its agent loop: each
+	// entry is either a declared `tool` (the caller supplies a Go handler) or
+	// another declared `function` used as a self-contained sub-agent (auto-wired,
+	// no handler needed). When at least one entry is a tool the generated function
+	// takes a typed handlers struct; pure sub-agent orchestrators take none.
 	Tools []string
-	Line  int
+	// Description is the optional `description "..."` summary of what this function
+	// does. It is used when the function is delegated to as a sub-agent, becoming
+	// the tool description the orchestrating model sees.
+	Description string
+	Line        int
 }
 
 // TestDecl is `test Name { function F args { k v ... } expect { k v ... } }` — an

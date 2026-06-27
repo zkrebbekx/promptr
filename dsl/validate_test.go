@@ -95,8 +95,100 @@ function F(g: string) -> string {
 }`)
 		msgs := diagMsgs(f)
 		Convey("Then the unknown tool and unresolved tool type are flagged", func() {
-			So(msgs, ShouldContain, `function "F" uses unknown tool "Missing"`)
+			So(msgs, ShouldContain, `function "F" uses unknown tool or sub-agent "Missing"`)
 			So(msgs, ShouldContain, `tool Bad refers to unknown type "Ghost"`)
+		})
+	})
+
+	Convey("Given a function delegating to another function as a sub-agent", t, func() {
+		f, err := Parse(`
+class Research { summary string }
+class Brief { topic string }
+client C { provider "fake" model "x" }
+function ResearchTopic(topic: string) -> Research {
+  client C
+  description "research it"
+  prompt #"{{ topic }}"#
+}
+function WriteBrief(req: string) -> Brief {
+  client C
+  tools [ResearchTopic]
+  prompt #"{{ req }}"#
+}`)
+		So(err, ShouldBeNil)
+		Convey("Then Validate reports no diagnostics", func() {
+			So(Validate(f), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a function delegating to itself", t, func() {
+		f, _ := Parse(`
+class B { x string }
+client C { provider "fake" model "x" }
+function Loop(req: string) -> B {
+  client C
+  tools [Loop]
+  prompt #"{{ req }}"#
+}`)
+		Convey("Then self-delegation is flagged", func() {
+			So(diagMsgs(f), ShouldContain, `function "Loop" cannot delegate to itself as a sub-agent`)
+		})
+	})
+
+	Convey("Given a sub-agent that streams", t, func() {
+		f, _ := Parse(`
+class R { x string }
+class B { y string }
+client C { provider "fake" model "x" }
+function Sub(t: string) -> stream R { client C prompt #"{{ t }}"# }
+function Top(req: string) -> B { client C tools [Sub] prompt #"{{ req }}"# }`)
+		Convey("Then the streaming sub-agent is rejected", func() {
+			So(diagMsgs(f), ShouldContain, `function "Top" cannot use streaming function "Sub" as a sub-agent`)
+		})
+	})
+
+	Convey("Given a sub-agent that itself needs tool handlers", t, func() {
+		f, _ := Parse(`
+class W { city string }
+class R { x string }
+class B { y string }
+client C { provider "fake" model "x" }
+tool GetW(city: string) -> W { description "d" }
+function Sub(t: string) -> R { client C tools [GetW] prompt #"{{ t }}"# }
+function Top(req: string) -> B { client C tools [Sub] prompt #"{{ req }}"# }`)
+		Convey("Then the handler-needing sub-agent is rejected", func() {
+			So(diagMsgs(f), ShouldContain, `function "Top" cannot use sub-agent "Sub": it requires tool handlers (calls tool "GetW")`)
+		})
+	})
+
+	Convey("Given a sub-agent taking a binary part parameter", t, func() {
+		f, _ := Parse(`
+class R { x string }
+class B { y string }
+client C { provider "fake" model "x" }
+function Sub(photo: image) -> R { client C prompt #"go {{ ctx.output_schema }}"# }
+function Top(req: string) -> B { client C tools [Sub] prompt #"{{ req }}"# }`)
+		Convey("Then the part-param sub-agent is rejected", func() {
+			So(diagMsgs(f), ShouldContain, `function "Top" cannot use sub-agent "Sub": it takes a binary part parameter`)
+		})
+	})
+
+	Convey("Given a delegation cycle between two functions", t, func() {
+		f, _ := Parse(`
+class A { x string }
+class B { y string }
+client C { provider "fake" model "x" }
+function One(req: string) -> A { client C tools [Two] prompt #"{{ req }}"# }
+function Two(req: string) -> B { client C tools [One] prompt #"{{ req }}"# }`)
+		Convey("Then the cycle is flagged", func() {
+			msgs := diagMsgs(f)
+			hasCycle := false
+			for _, m := range msgs {
+				if m == `sub-agent delegation cycle through function "One"` || m == `sub-agent delegation cycle through function "Two"` {
+					hasCycle = true
+				}
+			}
+			So(hasCycle, ShouldBeTrue)
 		})
 	})
 

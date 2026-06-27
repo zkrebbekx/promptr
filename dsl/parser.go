@@ -326,6 +326,14 @@ func (p *parser) parseFunc() FuncDecl {
 			d.Client = p.expect(tIdent, "client name").text
 		case "tools":
 			d.Tools = p.parseIdentList()
+		case "description":
+			t := p.cur()
+			if t.kind == tString || t.kind == tRawString {
+				d.Description = t.text
+				p.advance()
+			} else {
+				p.errf(t, "expected description string")
+			}
 		case "prompt":
 			t := p.cur()
 			if t.kind == tRawString || t.kind == tString {

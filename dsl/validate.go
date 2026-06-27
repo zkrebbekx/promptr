@@ -131,13 +131,86 @@ func (v *validator) checkFuncs(f *File) {
 			}
 		}
 		for _, ref := range fn.Tools {
-			if !v.tools[ref] {
-				v.addf(fn.Line, "function %q uses unknown tool %q", fn.Name, ref)
+			switch {
+			case v.tools[ref]:
+				// a Go-backed tool — fine.
+			case v.funcs[ref]:
+				v.checkSubAgent(f, fn, ref)
+			default:
+				v.addf(fn.Line, "function %q uses unknown tool or sub-agent %q", fn.Name, ref)
 			}
 		}
 		v.checkTypeRef(fn.Line, fn.Name, fn.Ret)
 		for _, pm := range fn.Params {
 			v.checkTypeRef(fn.Line, fn.Name, pm.Type)
+		}
+	}
+	v.checkDelegationCycles(f)
+}
+
+// checkSubAgent validates that a function delegated to as a sub-agent (named in
+// another function's `tools` list) is wireable without a caller-supplied handler:
+// it must not stream, must take no binary part params (their JSON args can't be
+// coerced into a Part), and must not itself need handlers — i.e. its own tools
+// list must be pure sub-agents, never a Go-backed `tool`.
+func (v *validator) checkSubAgent(f *File, parent FuncDecl, ref string) {
+	if ref == parent.Name {
+		v.addf(parent.Line, "function %q cannot delegate to itself as a sub-agent", parent.Name)
+		return
+	}
+	sub, ok := funcByName(f, ref)
+	if !ok {
+		return
+	}
+	if sub.Stream {
+		v.addf(parent.Line, "function %q cannot use streaming function %q as a sub-agent", parent.Name, ref)
+	}
+	for _, pm := range sub.Params {
+		if isPartName(pm.Type.Name) {
+			v.addf(parent.Line, "function %q cannot use sub-agent %q: it takes a binary part parameter", parent.Name, ref)
+			break
+		}
+	}
+	for _, inner := range sub.Tools {
+		if v.tools[inner] {
+			v.addf(parent.Line, "function %q cannot use sub-agent %q: it requires tool handlers (calls tool %q)", parent.Name, ref, inner)
+			break
+		}
+	}
+}
+
+// checkDelegationCycles reports a cycle in the function→sub-agent delegation
+// graph, which would otherwise generate mutually-recursive, non-terminating Go.
+func (v *validator) checkDelegationCycles(f *File) {
+	state := map[string]int{} // 0 unvisited, 1 on-stack, 2 done
+	var walk func(name string) bool
+	walk = func(name string) bool {
+		state[name] = 1
+		fn, ok := funcByName(f, name)
+		if ok {
+			for _, ref := range fn.Tools {
+				if !v.funcs[ref] {
+					continue // only function refs form delegation edges
+				}
+				switch state[ref] {
+				case 1:
+					v.addf(fn.Line, "sub-agent delegation cycle through function %q", ref)
+					return true
+				case 0:
+					if walk(ref) {
+						return true
+					}
+				}
+			}
+		}
+		state[name] = 2
+		return false
+	}
+	for _, fn := range f.Funcs {
+		if state[fn.Name] == 0 {
+			if walk(fn.Name) {
+				return
+			}
 		}
 	}
 }

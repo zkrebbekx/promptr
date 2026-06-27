@@ -74,6 +74,46 @@ function F(text: string) -> stream T {
 	})
 }
 
+func TestFormatPreservesFuncDescriptionAndSubAgent(t *testing.T) {
+	Convey("Given an orchestrator delegating to a sub-agent function", t, func() {
+		src := `class R {
+  summary string
+}
+class B {
+  topic string
+}
+client C {
+  provider "fake"
+  model    "scripted"
+}
+function ResearchTopic(topic: string) -> R {
+  client C
+  description "Research a topic."
+  prompt #"go {{ topic }}"#
+}
+function WriteBrief(req: string) -> B {
+  client C
+  tools [ResearchTopic]
+  prompt #"go {{ req }}"#
+}`
+		Convey("When formatted", func() {
+			out, err := Format(src)
+			So(err, ShouldBeNil)
+
+			Convey("Then the function description and tool delegation survive", func() {
+				So(out, ShouldContainSubstring, `description "Research a topic."`)
+				So(out, ShouldContainSubstring, "tools [ResearchTopic]")
+			})
+
+			Convey("Then it is idempotent", func() {
+				twice, err := Format(out)
+				So(err, ShouldBeNil)
+				So(twice, ShouldEqual, out)
+			})
+		})
+	})
+}
+
 func TestFormatPreservesComments(t *testing.T) {
 	Convey("Given leading and trailing comments", t, func() {
 		src := `// a class

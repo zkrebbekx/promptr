@@ -314,6 +314,38 @@ falls back transparently to a single final `Partial`. Works on providers impleme
 (native `/api/chat` tools), and `fake`; others return a clear "does not support
 tool calls" error. See `examples/agent`.
 
+### Multi-agent orchestration
+
+A function's `tools [...]` may name **another function**, which the compiler
+auto-wires as a self-contained sub-agent — no Go handler required:
+
+```
+function ResearchTopic(topic: string) -> Research {
+  client Default
+  description "Research a topic and return a summary with sources."
+  prompt #"Research it. {{ ctx.output_schema }} Topic: {{ topic }}"#
+}
+
+function WriteBrief(request: string) -> Brief {
+  client Default
+  tools [ResearchTopic]          // a function, not a tool → sub-agent
+  prompt #"Write a brief; use ResearchTopic for background. {{ ctx.output_schema }} Request: {{ request }}"#
+}
+```
+
+`WriteBrief` takes **no handlers struct** — only the orchestrator's params. Its
+agent loop calls `ResearchTopic` directly, threading the same provider, so the
+sub-agent runs its own typed extraction (or its own nested loop) and its
+`Research` result is marshalled back into the loop. The function's `description`
+becomes the tool description the orchestrating model sees; absent one, a default
+is synthesized. Sub-agents compose into trees — a coordinator can delegate to
+several, each of which delegates further — all auto-wired and typed end-to-end.
+
+`promptr check` keeps the graph sound: a sub-agent must be a non-streaming
+function with no binary-part params and no Go-backed `tool`s of its own (those
+would need handlers), and delegation cycles are rejected. See
+[`examples/multiagent`](examples/multiagent/).
+
 ## Providers
 
 The core imports no LLM SDK. A `Provider` is one method:
@@ -476,9 +508,9 @@ cask.
 A WebAssembly playground runs entirely client-side — no API calls — at
 **[zkrebbekx.github.io/promptr](https://zkrebbekx.github.io/promptr/)**. It has a
 clickable gallery of examples (typed extraction, unions & attributes, streaming,
-`@assert`/`@check` validation, the tool-calling agent loop, and live tests that
-emit a `_test.go`) plus a live `promptr fmt` button and the messy-output →
-repaired-value parser. Source in
+`@assert`/`@check` validation, the tool-calling agent loop, multi-agent
+sub-agent delegation, and live tests that emit a `_test.go`) plus a live
+`promptr fmt` button and the messy-output → repaired-value parser. Source in
 [`playground/`](playground/); deployed to GitHub Pages from tagged `main`, so it
 always reflects the latest release.
 
