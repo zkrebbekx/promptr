@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/zkrebbekx/promptr/compare/v0.11.0...v0.12.0) (2026-06-27)
+
+
+### Features
+
+* promptr fmt — comment-preserving canonical formatter ([#23](https://github.com/zkrebbekx/promptr/issues/23)) ([c804a09](https://github.com/zkrebbekx/promptr/commit/c804a091c61fc3f50f7d91a9e4a058048ada4184))
+
 ## [0.11.0](https://github.com/zkrebbekx/promptr/compare/v0.10.0...v0.11.0) (2026-06-27)
 
 
