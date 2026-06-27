@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/zkrebbekx/promptr/compare/v0.1.0...v0.2.0) (2026-06-27)
+
+
+### Features
+
+* **v0.2:** runtime template engine, multi-provider, client policies ([#2](https://github.com/zkrebbekx/promptr/issues/2)) ([ef63acd](https://github.com/zkrebbekx/promptr/commit/ef63acdef127989e98dbf0b57451059faefe0f66))
+
 ## 0.1.0 (2026-06-26)
 
 
