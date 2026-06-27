@@ -290,6 +290,10 @@ func (p *parser) parseFunc() FuncDecl {
 	}
 	p.expect(tRParen, "')'")
 	p.expect(tArrow, "'->'")
+	if p.cur().kind == tIdent && p.cur().text == "stream" {
+		p.advance()
+		d.Stream = true
+	}
 	d.Ret = p.parseTypeRef()
 	p.expect(tLBrace, "'{'")
 	for p.cur().kind != tRBrace && p.cur().kind != tEOF {

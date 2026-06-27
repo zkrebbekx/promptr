@@ -9,12 +9,15 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zkrebbekx/promptr"
@@ -46,11 +49,56 @@ func New(apiKey, model string) *Client {
 type reqBody struct {
 	Model    string   `json:"model"`
 	Messages []apiMsg `json:"messages"`
+	Stream   bool     `json:"stream,omitempty"`
 }
 
+// apiMsg.Content is `any` because the Chat Completions API accepts either a
+// plain string (text-only) or an array of typed content parts (multimodal).
 type apiMsg struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// buildMessages maps promptr messages to the API shape, emitting a content
+// array only when a message carries multimodal Parts.
+func buildMessages(messages []promptr.Message) []apiMsg {
+	out := make([]apiMsg, 0, len(messages))
+	for _, m := range messages {
+		if len(m.Parts) == 0 {
+			out = append(out, apiMsg{Role: m.Role, Content: m.Content})
+			continue
+		}
+		out = append(out, apiMsg{Role: m.Role, Content: contentParts(m.Parts)})
+	}
+	return out
+}
+
+func contentParts(parts []promptr.Part) []map[string]any {
+	out := make([]map[string]any, 0, len(parts))
+	for _, p := range parts {
+		switch p.Kind {
+		case promptr.PartImage:
+			out = append(out, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": imageURL(p)},
+			})
+		default: // text (and any kind this endpoint can't carry) → text
+			out = append(out, map[string]any{"type": "text", "text": p.Text})
+		}
+	}
+	return out
+}
+
+// imageURL returns a data: URL for inline image bytes, or the Part's URL.
+func imageURL(p promptr.Part) string {
+	if len(p.Data) > 0 {
+		mime := p.MIME
+		if mime == "" {
+			mime = "image/png"
+		}
+		return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+	}
+	return p.URL
 }
 
 type respBody struct {
@@ -71,10 +119,7 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 	if c.APIKey == "" {
 		return "", fmt.Errorf("openai: empty API key")
 	}
-	body := reqBody{Model: c.Model}
-	for _, m := range messages {
-		body.Messages = append(body.Messages, apiMsg{Role: m.Role, Content: m.Content})
-	}
+	body := reqBody{Model: c.Model, Messages: buildMessages(messages)}
 
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -113,6 +158,78 @@ func (c *Client) Complete(ctx context.Context, messages []promptr.Message) (stri
 	return out.Choices[0].Message.Content, nil
 }
 
+// streamChunk is one server-sent delta in a streaming completion.
+type streamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
+}
+
+// Stream sends the conversation with stream:true and yields each token delta as
+// it arrives, parsing the server-sent `data:` events. It implements
+// promptr.StreamProvider. The channel closes when the model emits [DONE] or the
+// response ends.
+func (c *Client) Stream(ctx context.Context, messages []promptr.Message) (<-chan string, error) {
+	if c.APIKey == "" {
+		return nil, fmt.Errorf("openai: empty API key")
+	}
+	body := reqBody{Model: c.Model, Messages: buildMessages(messages), Stream: true}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/v1/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+c.APIKey)
+	req.Header.Set("accept", "text/event-stream")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("openai: %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	out := make(chan string)
+	go func() {
+		defer close(out)
+		defer func() { _ = resp.Body.Close() }()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			data, ok := strings.CutPrefix(line, "data:")
+			if !ok {
+				continue
+			}
+			data = strings.TrimSpace(data)
+			if data == "[DONE]" {
+				return
+			}
+			var ch streamChunk
+			if json.Unmarshal([]byte(data), &ch) != nil || len(ch.Choices) == 0 {
+				continue
+			}
+			if delta := ch.Choices[0].Delta.Content; delta != "" {
+				select {
+				case out <- delta:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
 func (c *Client) baseURL() string {
 	if c.BaseURL == "" {
 		return defaultBaseURL
@@ -134,5 +251,8 @@ func trimSlash(s string) string {
 	return s
 }
 
-// static assertion: Client satisfies the runtime contract.
-var _ promptr.Provider = (*Client)(nil)
+// static assertions: Client satisfies both runtime contracts.
+var (
+	_ promptr.Provider       = (*Client)(nil)
+	_ promptr.StreamProvider = (*Client)(nil)
+)

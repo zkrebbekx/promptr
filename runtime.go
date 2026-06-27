@@ -19,6 +19,10 @@ import (
 type Message struct {
 	Role    string
 	Content string
+	// Parts, when non-empty, carries a multimodal message (text + images/etc).
+	// Providers that support multimodal input map Parts to their content array;
+	// otherwise Content is used. Text-only callers leave Parts nil.
+	Parts []Part
 }
 
 // Provider is the single seam between promptr and a language model. Implement it
@@ -35,6 +39,20 @@ type Options struct {
 	Attempts int
 	// System, when non-empty, is prepended as a system message.
 	System string
+	// UserParts, when non-empty, makes the user turn multimodal: the rendered
+	// prompt becomes the leading text Part, followed by these (images, files…).
+	UserParts []Part
+}
+
+// userMessage builds the user turn for prompt, attaching any multimodal parts.
+func (o Options) userMessage(prompt string) Message {
+	if len(o.UserParts) == 0 {
+		return Message{Role: "user", Content: prompt}
+	}
+	parts := make([]Part, 0, len(o.UserParts)+1)
+	parts = append(parts, TextPart(prompt))
+	parts = append(parts, o.UserParts...)
+	return Message{Role: "user", Content: prompt, Parts: parts}
 }
 
 func (o Options) attempts() int {
@@ -55,7 +73,7 @@ func Extract[T any](ctx context.Context, p Provider, prompt string, opts Options
 	if opts.System != "" {
 		msgs = append(msgs, Message{Role: "system", Content: opts.System})
 	}
-	msgs = append(msgs, Message{Role: "user", Content: prompt})
+	msgs = append(msgs, opts.userMessage(prompt))
 
 	var lastErr error
 	for i := 0; i < opts.attempts(); i++ {
