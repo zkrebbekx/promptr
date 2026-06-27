@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/zkrebbekx/promptr/compare/v0.9.0...v0.10.0) (2026-06-27)
+
+
+### Features
+
+* opt-in parallel tool dispatch ([#19](https://github.com/zkrebbekx/promptr/issues/19)) ([bd55ff8](https://github.com/zkrebbekx/promptr/commit/bd55ff84dec4884c7c40b3d72acdbf0578f72a2b))
+
 ## [0.9.0](https://github.com/zkrebbekx/promptr/compare/v0.8.0...v0.9.0) (2026-06-27)
 
 
