@@ -328,9 +328,29 @@ s := col.Stats()
 log.Printf("%d calls, %d tokens, %s avg", s.Calls, s.TotalTokens(), s.AvgLatency())
 ```
 
-`Chain` composes middlewares; the OpenTelemetry exporter is left to a future
-opt-in subpackage so the core stays dependency-free — `Middleware` is the seam
-it plugs into.
+**Hooks (streaming + tool calls too).** `Middleware`/`Chain` wrap only
+`Complete`, so wrapping a streaming or tool-calling provider hides those
+capabilities. For observability across **all** paths use `WithHooks`, which is
+capability-preserving — the wrapped provider still streams and runs tools — and
+fires a `Hook` before and after every `Complete`, `Stream` and `CompleteTools`:
+
+```go
+type Hook interface {
+    BeforeCall(ctx context.Context, info CallInfo) AfterFunc // AfterFunc(Outcome)
+}
+
+col := &promptr.Collector{}
+p := promptr.WithHooks(openaiClient,
+    col.Hook(),                       // latency + tokens on every path
+    promptr.LogHook(slog.Default()),  // structured logs, zero deps
+)
+itin, _ := PlanTrip(ctx, p, goal, handlers) // tool calls still work, now observed
+```
+
+A `Hook` is the whole extension surface: an OpenTelemetry span exporter is a
+~20-line `Hook` that opens a span in `BeforeCall` and ends it in the returned
+`AfterFunc`, kept out of core so it stays dependency-free. `LogHook` (built on
+stdlib `log/slog`) is the reference implementation.
 
 ## Tooling & editor support
 
