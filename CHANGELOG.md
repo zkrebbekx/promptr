@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/zkrebbekx/promptr/compare/v0.6.0...v0.7.0) (2026-06-27)
+
+
+### Features
+
+* v0.7 capability-preserving observability hooks ([#13](https://github.com/zkrebbekx/promptr/issues/13)) ([53f17cc](https://github.com/zkrebbekx/promptr/commit/53f17cc3120d495b90726bdcae92516f95a1082f))
+
 ## [0.6.0](https://github.com/zkrebbekx/promptr/compare/v0.5.0...v0.6.0) (2026-06-27)
 
 
