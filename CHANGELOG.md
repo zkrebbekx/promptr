@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/zkrebbekx/promptr/compare/v0.8.0...v0.9.0) (2026-06-27)
+
+
+### Features
+
+* native tool-calling for gemini & ollama ([#17](https://github.com/zkrebbekx/promptr/issues/17)) ([d80f23a](https://github.com/zkrebbekx/promptr/commit/d80f23ac56ad67479219dc86240f7e610d9f0828))
+
 ## [0.8.0](https://github.com/zkrebbekx/promptr/compare/v0.7.0...v0.8.0) (2026-06-27)
 
 
