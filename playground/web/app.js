@@ -2,7 +2,7 @@
 
 // VERSION is the promptr release this playground is built from. The WASM is
 // compiled against the tagged source, so bump this whenever a new version ships.
-const VERSION = "v0.14.1";
+const VERSION = "v0.14.2";
 
 // EXAMPLES is the clickable gallery. Each entry is a self-contained .promptr
 // snippet that showcases one capability; clicking a chip loads it into the DSL

@@ -293,7 +293,8 @@ function WriteBrief(request: string) -> Brief {
 			So(code, ShouldContainSubstring, "promptr.RunTools[Brief](ctx, p, prompt, []promptr.Tool{")
 			So(code, ShouldContainSubstring, `Name: "ResearchTopic", Description: "Research a topic."`)
 			So(code, ShouldContainSubstring, "coerce.Into[ResearchTopicArgs](argsJSON)")
-			So(code, ShouldContainSubstring, "ResearchTopic(ctx, p, args.Topic)")
+			// opt... threads the orchestrator's options (hooks/system/budget) down.
+			So(code, ShouldContainSubstring, "ResearchTopic(ctx, p, args.Topic, opt...)")
 			So(code, ShouldContainSubstring, "json.Marshal(result)")
 		})
 

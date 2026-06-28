@@ -86,7 +86,7 @@ func WriteBrief(ctx context.Context, p promptr.Provider, request string, opt ...
 				if err != nil {
 					return "", err
 				}
-				result, err := ResearchTopic(ctx, p, args.Topic)
+				result, err := ResearchTopic(ctx, p, args.Topic, opt...)
 				if err != nil {
 					return "", err
 				}
