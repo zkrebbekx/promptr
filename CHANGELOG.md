@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/zkrebbekx/promptr/compare/v0.14.0...v0.14.1) (2026-06-28)
+
+
+### Bug Fixes
+
+* **coerce:** bound parser recursion to prevent stack-overflow crash ([#32](https://github.com/zkrebbekx/promptr/issues/32)) ([c942d2b](https://github.com/zkrebbekx/promptr/commit/c942d2be6adce5e88016a2c13562e4c1e4810c1f))
+
 ## [0.14.0](https://github.com/zkrebbekx/promptr/compare/v0.13.0...v0.14.0) (2026-06-27)
 
 
