@@ -336,6 +336,24 @@ func TestDeeplyNestedInputDoesNotOverflowStack(t *testing.T) {
 	})
 }
 
+// Guards the skipWS block-comment path: an unterminated /* ... must not advance
+// the cursor past end-of-input, and must be tolerated like any other truncation.
+func TestUnterminatedBlockCommentIsTolerated(t *testing.T) {
+	Convey("Given input whose block comment is never closed", t, func() {
+		raw := `{"title": "ok" /* trailing note that never ends`
+
+		Convey("When coerced", func() {
+			f := func() { _, _ = coerce.Into[Ticket](raw) }
+
+			Convey("Then it does not panic and recovers what parsed", func() {
+				So(f, ShouldNotPanic)
+				got, _ := coerce.Into[Ticket](raw)
+				So(got.Title, ShouldEqual, "ok")
+			})
+		})
+	})
+}
+
 // Ensures the bare-scalar path doesn't choke on a value that is just prose.
 func TestNonNumericProseIsEmptyNotPanic(t *testing.T) {
 	Convey("Given prose with no parseable structure for an int target", t, func() {

@@ -413,8 +413,10 @@ func (g *gen) renderToolEntry(b *strings.Builder, t dsl.ToolDecl) {
 // renderSubAgentEntry emits one promptr.Tool that delegates to another generated
 // function — a self-contained sub-agent. No caller handler is needed: the Invoke
 // coerces the model's JSON args into the sub-agent's args struct and calls the
-// generated function directly, threading the same provider so the sub-agent runs
-// its own typed extraction (or nested loop) and feeds the result back up.
+// generated function directly, threading the same provider AND the orchestrator's
+// options (opt...) so observability hooks, the system prompt and the step budget
+// flow down the delegation tree — and the sub-agent runs its own typed extraction
+// (or nested loop) and feeds the result back up.
 func (g *gen) renderSubAgentEntry(b *strings.Builder, sub dsl.FuncDecl) {
 	desc := sub.Description
 	if desc == "" {
@@ -430,6 +432,7 @@ func (g *gen) renderSubAgentEntry(b *strings.Builder, sub dsl.FuncDecl) {
 	for _, pm := range sub.Params {
 		callArgs = append(callArgs, "args."+goName(pm.Name))
 	}
+	callArgs = append(callArgs, "opt...")
 	fmt.Fprintf(b, "\t\t\t\tresult, err := %s(%s)\n", sub.Name, strings.Join(callArgs, ", "))
 	b.WriteString("\t\t\t\tif err != nil {\n\t\t\t\t\treturn \"\", err\n\t\t\t\t}\n")
 	b.WriteString("\t\t\t\tout, err := json.Marshal(result)\n")

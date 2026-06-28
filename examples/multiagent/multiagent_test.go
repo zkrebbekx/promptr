@@ -2,6 +2,7 @@ package multiagent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zkrebbekx/promptr"
@@ -48,6 +49,50 @@ func TestWriteBriefDelegatesToSubAgent(t *testing.T) {
 					}
 				}
 				So(toolResults, ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestOrchestratorOptionsReachSubAgent(t *testing.T) {
+	Convey("Given an orchestrator run with a system prompt option", t, func() {
+		p := &fake.Provider{
+			ToolReplies: []fake.Reply{
+				{Calls: []promptr.ToolCall{
+					{ID: "c1", Name: "ResearchTopic", Arguments: `{"topic": "tidal energy"}`},
+				}},
+				{Text: `{"topic": "tidal energy", "recommendation": "pilot a 2MW array"}`},
+			},
+			Replies: []string{
+				`{"summary": "predictable, capital-heavy", "sources": ["IEA"]}`,
+			},
+		}
+
+		Convey("When WriteBrief runs with WithSystem", func() {
+			const sentinel = "RESPOND-IN-SPARTAN-PROSE"
+			_, err := WriteBrief(context.Background(), p, "should we invest in tidal energy?", promptr.WithSystem(sentinel))
+			So(err, ShouldBeNil)
+
+			Convey("Then the option propagates down into the sub-agent's own call", func() {
+				// Find the sub-agent's call (the one carrying its research prompt)
+				// and assert the orchestrator's system prompt reached it — proof
+				// that opt... threads through the delegation tree.
+				var subAgentSawSystem bool
+				for _, call := range p.Calls {
+					isSubAgent, hasSystem := false, false
+					for _, m := range call {
+						if m.Role == "user" && strings.Contains(m.Content, "Research the topic") {
+							isSubAgent = true
+						}
+						if m.Role == "system" && m.Content == sentinel {
+							hasSystem = true
+						}
+					}
+					if isSubAgent && hasSystem {
+						subAgentSawSystem = true
+					}
+				}
+				So(subAgentSawSystem, ShouldBeTrue)
 			})
 		})
 	})

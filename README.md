@@ -340,6 +340,8 @@ sub-agent runs its own typed extraction (or its own nested loop) and its
 becomes the tool description the orchestrating model sees; absent one, a default
 is synthesized. Sub-agents compose into trees — a coordinator can delegate to
 several, each of which delegates further — all auto-wired and typed end-to-end.
+Options you pass the orchestrator (`WithSystem`, `WithMaxSteps`, observability
+hooks) propagate down the whole tree, so one call configures every agent in it.
 
 `promptr check` keeps the graph sound: a sub-agent must be a non-streaming
 function with no binary-part params and no Go-backed `tool`s of its own (those
