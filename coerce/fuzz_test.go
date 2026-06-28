@@ -1,6 +1,7 @@
 package coerce_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zkrebbekx/promptr/coerce"
@@ -15,6 +16,7 @@ func FuzzInto(f *testing.F) {
 		`{"a":`, `{"a": [1, 2`, `'single'`, "```json\n{}",
 		`{a: b, c: 'd',}`, `null`, `true`, `-`, `$`, `{"x": "\u00"`,
 		`[[[[[[[[`, `{"k":{"k":{"k":`,
+		strings.Repeat("[", 4000), strings.Repeat(`{"k":`, 4000),
 	}
 	for _, s := range seeds {
 		f.Add(s)

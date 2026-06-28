@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// maxDepth bounds how deeply nested an object/array the tolerant parser will
+// descend into. Adversarial or garbage input (e.g. a few million nested "[")
+// would otherwise recurse one stack frame per level and overflow the goroutine
+// stack — an unrecoverable fatal error, since stack overflow cannot be caught by
+// recover(). Real model output is never this deep, so once the limit is reached
+// the parser stops descending and unwinds with a partial value (truncated),
+// matching how it already degrades on unterminated input. The cap also bounds
+// the downstream node→value conversion, which walks the same tree.
+const maxDepth = 1000
+
 // parseTolerant extracts and parses the first JSON-ish value embedded in raw
 // model output. It is deliberately lenient: it skips prose and Markdown code
 // fences around the payload, and within the payload it tolerates trailing
@@ -15,7 +25,7 @@ import (
 func parseTolerant(raw string) (node, bool) {
 	p := &parser{s: stripFences(raw)}
 	p.locateStart()
-	n := p.parseValue()
+	n := p.parseValue(0)
 	return n, !p.truncated
 }
 
@@ -83,17 +93,24 @@ func (p *parser) skipWS() {
 	}
 }
 
-func (p *parser) parseValue() node {
+func (p *parser) parseValue(depth int) node {
 	p.skipWS()
 	if p.i >= len(p.s) {
 		p.truncated = true
 		return node{kind: kNull}
 	}
+	if depth > maxDepth {
+		// Nesting past the limit: refuse to descend further and unwind with a
+		// partial value. This caps the recursion (and the downstream tree walk)
+		// so adversarial input can never overflow the goroutine stack.
+		p.truncated = true
+		return node{kind: kNull, partial: true}
+	}
 	switch p.s[p.i] {
 	case '{':
-		return p.parseObject()
+		return p.parseObject(depth)
 	case '[':
-		return p.parseArray()
+		return p.parseArray(depth)
 	case '"', '\'', '`':
 		return p.parseString()
 	default:
@@ -109,7 +126,7 @@ func (p *parser) parseValue() node {
 	}
 }
 
-func (p *parser) parseObject() node {
+func (p *parser) parseObject(depth int) node {
 	p.i++ // consume '{'
 	n := node{kind: kObj}
 	for {
@@ -133,7 +150,7 @@ func (p *parser) parseObject() node {
 		if p.i < len(p.s) && p.s[p.i] == ':' {
 			p.i++
 		}
-		val := p.parseValue()
+		val := p.parseValue(depth + 1)
 		n.obj = append(n.obj, field{key: key, val: val})
 		if p.truncated {
 			n.partial = true
@@ -142,7 +159,7 @@ func (p *parser) parseObject() node {
 	}
 }
 
-func (p *parser) parseArray() node {
+func (p *parser) parseArray(depth int) node {
 	p.i++ // consume '['
 	n := node{kind: kArr}
 	for {
@@ -156,7 +173,7 @@ func (p *parser) parseArray() node {
 			p.i++
 			return n
 		}
-		val := p.parseValue()
+		val := p.parseValue(depth + 1)
 		n.arr = append(n.arr, val)
 		if p.truncated {
 			n.partial = true

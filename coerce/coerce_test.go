@@ -307,6 +307,35 @@ func TestProseIntoStructIsCoerceError(t *testing.T) {
 	})
 }
 
+// Guards against the unbounded-recursion crash: deeply nested input must not
+// overflow the goroutine stack (a fatal error recover() cannot catch). The
+// parser caps nesting and unwinds with a partial value instead. Before the depth
+// guard, a few million nested openers crashed the whole process; here we use far
+// more than the cap so the test would have died outright without the fix.
+func TestDeeplyNestedInputDoesNotOverflowStack(t *testing.T) {
+	Convey("Given pathologically deep nesting well past the parser's depth cap", t, func() {
+		arrs := strings.Repeat("[", 2_000_000)
+		objs := strings.Repeat(`{"k":`, 2_000_000)
+
+		Convey("When coerced into any", func() {
+			done := make(chan struct{})
+			var pa, po any
+			go func() {
+				pa, _ = coerce.Into[any](arrs)
+				po, _ = coerce.Into[any](objs)
+				close(done)
+			}()
+
+			Convey("Then it completes without crashing", func() {
+				<-done
+				_ = pa
+				_ = po
+				So(true, ShouldBeTrue)
+			})
+		})
+	})
+}
+
 // Ensures the bare-scalar path doesn't choke on a value that is just prose.
 func TestNonNumericProseIsEmptyNotPanic(t *testing.T) {
 	Convey("Given prose with no parseable structure for an int target", t, func() {
