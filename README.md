@@ -90,6 +90,7 @@ ticket, err := coerce.Into[Ticket](modelText) // modelText: fences, prose and al
 | `{"due_days": "7"}` into an `int` field | ✗ | ✓ coerces `"7"` → `7` |
 | `{"amount": "$1,200.50"}` into a `float64` | ✗ | ✓ → `1200.5` |
 | `{"severity": "high priority"}` into an enum | ✗ | ✓ fuzzy-matches → `HIGH` |
+| `{"UserName": …, "Email-Addr": …}` into `user_name` / `email_addr` fields | ✗ | ✓ snaps keys (case- and separator-insensitive) |
 | `{"title": "x", "tags": ["a",` (truncated) | ✗ | ✓ recovers what parsed |
 
 Nested structs, `*T` optionals, maps, snake/camel/case-insensitive keys, and a

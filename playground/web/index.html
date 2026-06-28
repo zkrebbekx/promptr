@@ -9,7 +9,7 @@
 <body>
 <header>
   <h1>promptr<span class="caret">_</span>
-    <a class="badge" href="https://github.com/zkrebbekx/promptr/releases/latest">v0.14.2</a>
+    <a class="badge" href="https://github.com/zkrebbekx/promptr/releases/latest">v0.15.0</a>
   </h1>
   <p>Typed prompts for Go. Everything below runs client-side in WebAssembly —
      no API calls.</p>
@@ -37,8 +37,9 @@
   <section class="pane">
     <h2>2 · Schema-aligned parse</h2>
     <p class="hint">The messy reply a model actually emits for the example on the
-       left — fences, prose, trailing commas. Watch the tolerant parser repair it,
-       or paste your own.</p>
+       left — fences, prose, trailing commas, differently-cased keys. Watch the
+       parser repair it <em>and</em> snap each key onto the schema's fields, or
+       paste your own.</p>
     <textarea id="messy" spellcheck="false"></textarea>
     <pre id="json" class="out"></pre>
   </section>

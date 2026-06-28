@@ -2,7 +2,7 @@
 
 // VERSION is the promptr release this playground is built from. The WASM is
 // compiled against the tagged source, so bump this whenever a new version ships.
-const VERSION = "v0.14.2";
+const VERSION = "v0.15.0";
 
 // EXAMPLES is the clickable gallery. Each entry is a self-contained .promptr
 // snippet that showcases one capability; clicking a chip loads it into the DSL
@@ -145,6 +145,41 @@ function ExtractAccount(text: string) -> Account {
   client Default
   prompt #"
     Extract an account from the user's message.
+    {{ ctx.output_schema }}
+    Message: {{ text }}
+  "#
+}`,
+  },
+  {
+    id: "fuzzy",
+    label: "Fuzzy field names",
+    blurb: "Field matching is case- and separator-insensitive. The model emits UserName, Email-Addr, isActive, LoginCount — and the parser snaps each onto the schema's snake_case fields, coercing the loose scalars to their declared types. Edit the keys on the right to watch it hold.",
+    messy: `Here's the profile:
+
+\`\`\`json
+{
+  "UserName": "ada",
+  "Email-Addr": "ada@example.com",
+  "isActive": true,
+  "LoginCount": "42",
+}
+\`\`\``,
+    dsl: `class Profile {
+  user_name   string
+  email_addr  string
+  is_active   bool
+  login_count int
+}
+
+client Default {
+  provider "fake"
+  model    "scripted"
+}
+
+function ExtractProfile(text: string) -> Profile {
+  client Default
+  prompt #"
+    Extract a user profile from the message.
     {{ ctx.output_schema }}
     Message: {{ text }}
   "#
@@ -356,7 +391,10 @@ function runFormat() {
 
 function runParse() {
   if (!window.promptrParse) return;
-  const r = window.promptrParse($("messy").value);
+  // Pass the schema (left pane) too: the parser coerces the messy reply into the
+  // schema's return class, so differently-cased / -separated keys snap onto the
+  // declared fields and loose scalars take their declared types.
+  const r = window.promptrParse($("messy").value, $("dsl").value);
   const out = $("json");
   out.textContent = r.err ? r.err + "\n\n" + r.json : r.json;
   out.classList.toggle("error", !!r.err);
@@ -398,7 +436,9 @@ function buildGallery() {
 
 function boot() {
   buildGallery();
-  $("dsl").addEventListener("input", debounce(runGenerate, 150));
+  // Editing the schema recompiles *and* re-aligns the parse, since the schema is
+  // now the target the right pane coerces into.
+  $("dsl").addEventListener("input", debounce(() => { runGenerate(); runParse(); }, 150));
   $("messy").addEventListener("input", debounce(runParse, 150));
   $("fmt-btn").addEventListener("click", runFormat);
   // loadExample seeds both panes (schema + matching messy reply) and runs both.
