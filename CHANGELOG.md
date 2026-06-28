@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/zkrebbekx/promptr/compare/v0.14.2...v0.15.0) (2026-06-28)
+
+
+### Features
+
+* **codegen:** schema-aligned playground parse + TargetType reflect builder ([#36](https://github.com/zkrebbekx/promptr/issues/36)) ([c486143](https://github.com/zkrebbekx/promptr/commit/c4861435b035acf00becbe7c1e25619e4f7b0b33))
+
 ## [0.14.2](https://github.com/zkrebbekx/promptr/compare/v0.14.1...v0.14.2) (2026-06-28)
 
 
