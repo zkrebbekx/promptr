@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="256" y1="40" x2="256" y2="472" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2BC4E8"/>
+      <stop offset="1" stop-color="#008CB2"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="120" y1="80" x2="392" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded terminal tile (transparent outside the corners) -->
+  <rect x="40" y="40" width="432" height="432" rx="104" fill="url(#tile)"/>
+  <rect x="40" y="40" width="432" height="432" rx="104" fill="url(#sheen)"/>
+
+  <!-- the prompt mark  >_  — Go's command prompt, echoing the promptr_ caret -->
+  <g transform="translate(-30,6)" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="206,166 300,256 206,346" fill="none" stroke-width="48"/>
+  </g>
+  <rect x="282" y="322" width="104" height="36" rx="18" fill="#ffffff"/>
+</svg>

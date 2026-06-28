@@ -1,8 +1,14 @@
-# promptr
+<p align="center">
+  <img src="assets/logo-mascot.png" alt="promptr" width="300" />
+</p>
 
-[![CI](https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml/badge.svg)](https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/zkrebbekx/promptr.svg)](https://pkg.go.dev/github.com/zkrebbekx/promptr)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<h1 align="center">promptr</h1>
+
+<p align="center">
+  <a href="https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml"><img src="https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://pkg.go.dev/github.com/zkrebbekx/promptr"><img src="https://pkg.go.dev/badge/github.com/zkrebbekx/promptr.svg" alt="Go Reference" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
 
 **[▶ Try it live in the playground](https://zkrebbekx.github.io/promptr/)** — compile `.promptr` → Go, format a schema, and watch the tolerant parser repair messy output, all client-side in your browser.
 

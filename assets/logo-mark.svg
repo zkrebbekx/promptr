@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- tile-less mark: the bare >_ prompt glyph in Go cyan, fully transparent bg -->
+  <g transform="translate(-30,6)" stroke="#00ADD8" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="206,166 300,256 206,346" fill="none" stroke-width="48"/>
+  </g>
+  <rect x="282" y="322" width="104" height="36" rx="18" fill="#00ADD8"/>
+</svg>
