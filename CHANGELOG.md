@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/zkrebbekx/promptr/compare/v0.14.1...v0.14.2) (2026-06-28)
+
+
+### Bug Fixes
+
+* propagate orchestrator options to sub-agents; harden parser block-comment ([#34](https://github.com/zkrebbekx/promptr/issues/34)) ([5d5c5dd](https://github.com/zkrebbekx/promptr/commit/5d5c5ddf9f5cf98f21235ae9aac4eb64598dd683))
+
 ## [0.14.1](https://github.com/zkrebbekx/promptr/compare/v0.14.0...v0.14.1) (2026-06-28)
 
 
