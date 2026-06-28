@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/logo-mascot.png" alt="promptr" width="300" />
+  <img src="assets/social-preview.png" alt="promptr — typed prompts for Go" width="820" />
 </p>
-
-<h1 align="center">promptr</h1>
 
 <p align="center">
   <a href="https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml"><img src="https://github.com/zkrebbekx/promptr/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
