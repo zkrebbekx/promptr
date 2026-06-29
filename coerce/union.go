@@ -25,6 +25,32 @@ func NewUnion(samples ...any) *Union {
 	return u
 }
 
+// NewUnionTypes builds a resolver directly from reflect.Types — the type-level
+// analogue of NewUnion, for callers that already hold the candidate types (e.g.
+// the playground builds them dynamically from a schema) rather than values.
+func NewUnionTypes(types ...reflect.Type) *Union {
+	u := &Union{}
+	u.candidates = append(u.candidates, types...)
+	return u
+}
+
+// Resolve parses raw, picks the best-fitting candidate, coerces into it, and
+// returns the value as any together with the chosen type. It is the non-generic
+// counterpart to ResolveInto, for callers that have no static union interface to
+// resolve into (only reflect.Types).
+func (u *Union) Resolve(raw string) (any, reflect.Type, error) {
+	n, _ := parseTolerant(raw)
+	rt, ok := u.bestFit(n)
+	if !ok {
+		return nil, nil, fmt.Errorf("coerce: no union candidate matched output")
+	}
+	rv, err := coerceNode(n, rt)
+	if err != nil {
+		return nil, rt, err
+	}
+	return rv.Interface(), rt, nil
+}
+
 // ResolveInto parses raw, picks the best-fitting candidate, coerces into it,
 // and returns it as the union interface I.
 func ResolveInto[I any](raw string, u *Union) (I, error) {

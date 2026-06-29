@@ -76,6 +76,60 @@ class Account { email string username string plan Sev }`)
 	})
 }
 
+func TestUnionTypesSchemaAlignedParse(t *testing.T) {
+	Convey("Given a schema whose function returns a named union", t, func() {
+		f, err := dsl.Parse(`
+class Search   { query string topk int @alias("max_results") }
+class Escalate { reason string metadata map<string, string> }
+union Action = Search | Escalate
+client Default { provider "fake" model "scripted" }
+function Route(message: string) -> Action {
+  client Default
+  prompt #"{{ message }} {{ ctx.output_schema }}"#
+}`)
+		So(err, ShouldBeNil)
+
+		Convey("When the union variant types are built", func() {
+			uts, ok := codegen.UnionTypes(f)
+			So(ok, ShouldBeTrue)
+			So(len(uts), ShouldEqual, 2)
+			u := coerce.NewUnionTypes(uts...)
+
+			Convey("Then an Escalate-shaped reply resolves to Escalate, not the first variant", func() {
+				v, rt, cerr := u.Resolve(`Escalating. {"reason":"needs a human","metadata":{"sev":"high"}}`)
+				So(cerr, ShouldBeNil)
+				So(rt.Name(), ShouldEqual, "") // dynamic struct, identified by fields
+				fields := structFields(v)
+				So(fields, ShouldContainKey, "Reason")
+				So(fields["Reason"], ShouldEqual, "needs a human")
+				So(fields, ShouldNotContainKey, "Query")
+			})
+
+			Convey("Then a Search-shaped reply still resolves to Search (with alias + int coercion)", func() {
+				v, _, cerr := u.Resolve(`I'll search. {"query":"headphones","max_results":"5"}`)
+				So(cerr, ShouldBeNil)
+				fields := structFields(v)
+				So(fields, ShouldContainKey, "Query")
+				So(fields["Query"], ShouldEqual, "headphones")
+				So(fields["Topk"], ShouldEqual, 5)
+			})
+		})
+	})
+
+	Convey("Given a schema whose function returns a plain class (no union)", t, func() {
+		f, err := dsl.Parse(`
+class Profile { name string }
+client Default { provider "fake" model "scripted" }
+function Extract(text: string) -> Profile { client Default prompt #"{{ text }}"# }`)
+		So(err, ShouldBeNil)
+
+		Convey("Then UnionTypes reports no union, so the caller uses TargetType", func() {
+			_, ok := codegen.UnionTypes(f)
+			So(ok, ShouldBeFalse)
+		})
+	})
+}
+
 // structFields reflects the coerced struct value into a name->value map so the
 // test can assert per field without importing the dynamically-built type.
 func structFields(v any) map[string]any {

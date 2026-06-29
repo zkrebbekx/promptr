@@ -32,16 +32,7 @@ func TargetType(f *dsl.File) (t reflect.Type, ok bool) {
 	if f == nil {
 		return nil, false
 	}
-	b := &typeBuilder{
-		classes: make(map[string]dsl.ClassDecl, len(f.Classes)),
-		enums:   make(map[string]bool, len(f.Enums)),
-	}
-	for _, c := range f.Classes {
-		b.classes[c.Name] = c
-	}
-	for _, e := range f.Enums {
-		b.enums[e.Name] = true
-	}
+	b := newTypeBuilder(f)
 	name := b.targetClassName(f)
 	if name == "" {
 		return nil, false
@@ -49,9 +40,78 @@ func TargetType(f *dsl.File) (t reflect.Type, ok bool) {
 	return b.classStruct(b.classes[name], map[string]bool{}), true
 }
 
+// UnionTypes returns the variant struct types of the target function's return
+// when that return is a union — the discriminated-union case the single-type
+// TargetType cannot express. A union return has no one "schema" to coerce into;
+// the caller resolves the messy reply into whichever variant best fits it (see
+// coerce.Union). The target function is found with the same last-function-wins
+// scan TargetType uses, so a plain-class return that is more recent than a union
+// still takes precedence (UnionTypes then returns ok=false and the caller uses
+// TargetType). ok=false also when a variant names something other than a class.
+func UnionTypes(f *dsl.File) (types []reflect.Type, ok bool) {
+	if f == nil {
+		return nil, false
+	}
+	b := newTypeBuilder(f)
+	for i := len(f.Funcs) - 1; i >= 0; i-- {
+		r := f.Funcs[i].Ret
+		if r.List || r.Map {
+			continue
+		}
+		if len(r.Union) > 0 { // inline union: -> A | B
+			return b.unionVariantTypes(r.Union)
+		}
+		if ud, isUnion := b.unions[r.Name]; isUnion { // named union: -> Action
+			return b.unionVariantTypes(ud.Variants)
+		}
+		if _, isClass := b.classes[r.Name]; isClass {
+			return nil, false // most-recent produced shape is a plain class
+		}
+	}
+	return nil, false
+}
+
+// unionVariantTypes builds a struct type per named variant. It reports ok=false
+// if any variant is not a declared class, since a non-struct variant cannot be
+// structurally scored against the model's object.
+func (b *typeBuilder) unionVariantTypes(names []string) ([]reflect.Type, bool) {
+	types := make([]reflect.Type, 0, len(names))
+	for _, name := range names {
+		c, isClass := b.classes[name]
+		if !isClass {
+			return nil, false
+		}
+		types = append(types, b.classStruct(c, map[string]bool{}))
+	}
+	if len(types) == 0 {
+		return nil, false
+	}
+	return types, true
+}
+
+// newTypeBuilder indexes a file's classes and enums for type construction.
+func newTypeBuilder(f *dsl.File) *typeBuilder {
+	b := &typeBuilder{
+		classes: make(map[string]dsl.ClassDecl, len(f.Classes)),
+		enums:   make(map[string]bool, len(f.Enums)),
+		unions:  make(map[string]dsl.UnionDecl, len(f.Unions)),
+	}
+	for _, c := range f.Classes {
+		b.classes[c.Name] = c
+	}
+	for _, e := range f.Enums {
+		b.enums[e.Name] = true
+	}
+	for _, u := range f.Unions {
+		b.unions[u.Name] = u
+	}
+	return b
+}
+
 type typeBuilder struct {
 	classes map[string]dsl.ClassDecl
 	enums   map[string]bool
+	unions  map[string]dsl.UnionDecl
 }
 
 // targetClassName prefers a function's plain (non-list, non-map, non-union)

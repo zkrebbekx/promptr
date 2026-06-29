@@ -75,6 +75,18 @@ func parse(_ js.Value, args []js.Value) any {
 	// generic tolerant parse so the pane still works while the schema is edited.
 	if len(args) >= 2 {
 		if f, perr := dsl.Parse(args[1].String()); perr == nil {
+			// A union return has no single schema to coerce into; resolve the
+			// messy reply into whichever variant best fits its shape (so an
+			// Escalate-shaped reply lands as Escalate, not the first variant).
+			if uts, ok := codegen.UnionTypes(f); ok {
+				v, _, err := coerce.NewUnionTypes(uts...).Resolve(raw)
+				if err != nil {
+					res["err"] = err.Error()
+				}
+				b, _ := json.MarshalIndent(v, "", "  ")
+				res["json"] = string(b)
+				return js.ValueOf(res)
+			}
 			if t, ok := codegen.TargetType(f); ok {
 				v, err := coerce.Value(raw, t)
 				if err != nil {
