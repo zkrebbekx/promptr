@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/zkrebbekx/promptr/compare/v0.15.0...v0.15.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **playground:** resolve union returns in schema-aligned parse ([#40](https://github.com/zkrebbekx/promptr/issues/40)) ([1da4f7b](https://github.com/zkrebbekx/promptr/commit/1da4f7b0f898fd7cd149af4d00e57ddbbf503652))
+
 ## [0.15.0](https://github.com/zkrebbekx/promptr/compare/v0.14.2...v0.15.0) (2026-06-28)
 
 
